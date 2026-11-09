@@ -1,0 +1,8 @@
+{
+ "Модель «{title}» не скачана. Скачайте ее или выберите другую в настройках, раздел «Распознавание речи».": "The \"{title}\" model is not downloaded. Download it or choose another one in Settings, Speech recognition section.",
+ "Модель «{title}» повреждена. Скачайте ее заново в настройках, раздел «Распознавание речи».": "The \"{title}\" model is damaged. Download it again in Settings, Speech recognition section.",
+ "Не хватает памяти для распознавания на этом компьютере. Закройте другие программы или выберите модель поменьше.": "Not enough memory to recognize speech on this computer. Close other apps or choose a smaller model.",
+ "Распознавание на этом компьютере прервалось (код {code}). Подробности в журнале программы.": "Speech recognition on this computer stopped (code {code}). See the app log for details.",
+ "Распознавание на этом компьютере отменено.": "Speech recognition on this computer was canceled.",
+ "Разметка говорящих": "Speaker diarization"
+}

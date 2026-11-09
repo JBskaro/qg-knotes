@@ -1,0 +1,5 @@
+{
+ "Calendar": "Календарь",
+ "ICS link to your calendar: Outlook - Publish calendar, Google - Secret address in iCal format, Yandex - Export. When recording starts, the meeting gets its title, participants and the project of the previous meeting with the same title. The link is kept in the Windows credential store, like a key.": "Ссылка ICS на ваш календарь: Outlook - «Опубликовать календарь», Google - «Секретный адрес в формате iCal», Яндекс - «Экспорт». Из него встреча при записи получит название, участников и проект прошлой встречи с тем же названием. Ссылка хранится в хранилище Windows, как ключ.",
+ "https://... .ics, empty - no calendar": "https://... .ics, пусто - без календаря"
+}

@@ -1,0 +1,6 @@
+{
+ "Couldn't rename the project": "Не удалось переименовать проект",
+ "Couldn't delete the project": "Не удалось удалить проект",
+ "{reason} Nothing has changed.": "{reason} Ничего не изменилось.",
+ "{reason} These files were not put back as they were: {files}.": "{reason} Эти файлы не удалось вернуть как было: {files}."
+}

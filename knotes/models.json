@@ -1,0 +1,139 @@
+{
+ "речь": ["silero-vad"],
+ "разметка": ["pyannote-segmentation-3-0", "wespeaker-voxceleb-resnet34"],
+ "скрыть": {
+  "streaming": "потоковые: для живой речи, записи распознают хуже",
+  "kws": "поиск ключевых слов, не распознавание",
+  "giga-am-russian-2024-10-24": "GigaAM v1: некоммерческая лицензия",
+  "funasr": "FunASR nano: другой движок, программа его не поддерживает",
+  "source-models": "исходники модели, она же есть готовой"
+ },
+ "языки": {
+  "parakeet-tdt-0.6b-v3": ["*"],
+  "parakeet-tdt-0.6b-v2": ["en"]
+ },
+ "модели": [
+  {
+   "id": "gigaam-v3-ctc-punct-int8",
+   "название": "GigaAM v3",
+   "вид": "nemo_ctc",
+   "языки": ["ru"],
+   "пунктуация": true,
+   "рекомендуется": true,
+   "пояснение": "Лучшая для русского, пишет числа цифрами.",
+   "лицензия": "MIT, GigaChat Team (Сбер)",
+   "ссылка": "https://github.com/salute-developers/GigaAM",
+   "файлы": [
+    {
+     "имя": "model.int8.onnx",
+     "размер": 224893661,
+     "sha256": "d5fea8df94263c285e54b21e5774b707c707192d3bdbeffd7b1eb07fb6743b35",
+     "адреса": ["https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-punct-giga-am-v3-russian-2025-12-16/resolve/4fb5407ff028a69fec516cdf4c10fac9ddea7c16/model.int8.onnx"]
+    },
+    {
+     "имя": "tokens.txt",
+     "размер": 2007,
+     "sha256": "142de7570b3de5b3035ce111a89c228e80e6085273731d944093ddf24fa539cd",
+     "адреса": ["https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-punct-giga-am-v3-russian-2025-12-16/resolve/4fb5407ff028a69fec516cdf4c10fac9ddea7c16/tokens.txt"]
+    }
+   ],
+   "архив": {
+    "имя": "sherpa-onnx-nemo-ctc-punct-giga-am-v3-russian-2025-12-16.tar.bz2",
+    "размер": 163282594,
+    "sha256": "20e41e160efa6f2460a7ef6554cdbbb9e8fffb2b92e6bc708e9406bd8b9256ea",
+    "адреса": ["https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-ctc-punct-giga-am-v3-russian-2025-12-16.tar.bz2"]
+   }
+  },
+  {
+   "id": "whisper-large-v3-turbo-int8",
+   "название": "Whisper large-v3-turbo",
+   "вид": "whisper",
+   "языки": ["*"],
+   "пунктуация": true,
+   "рекомендуется": false,
+   "пояснение": "Лучше понимает английские термины. Без видеокарты медленная.",
+   "лицензия": "MIT, OpenAI",
+   "ссылка": "https://github.com/openai/whisper",
+   "файлы": [
+    {
+     "имя": "turbo-encoder.int8.onnx",
+     "размер": 674716297,
+     "sha256": "b02dcdf54f348741e93fe732b67d933c8dcb6735655f710640143081db38878b",
+     "адреса": ["https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff/turbo-encoder.int8.onnx"]
+    },
+    {
+     "имя": "turbo-decoder.int8.onnx",
+     "размер": 361080764,
+     "sha256": "20accd02388482eb3a46bd615631adfdc85e1eb2c7db9ea3f02a40ffe6b81547",
+     "адреса": ["https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff/turbo-decoder.int8.onnx"]
+    },
+    {
+     "имя": "turbo-tokens.txt",
+     "размер": 816730,
+     "sha256": "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126",
+     "адреса": ["https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff/turbo-tokens.txt"]
+    }
+   ],
+   "архив": {
+    "имя": "sherpa-onnx-whisper-turbo.tar.bz2",
+    "размер": 563790207,
+    "sha256": "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22",
+    "адреса": ["https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-turbo.tar.bz2"]
+   }
+  },
+  {
+   "id": "silero-vad",
+   "название": "Silero VAD",
+   "служебная": true,
+   "вид": "silero_vad",
+   "лицензия": "MIT, Silero Team",
+   "ссылка": "https://github.com/snakers4/silero-vad",
+   "файлы": [
+    {
+     "имя": "silero_vad.onnx",
+     "размер": 643854,
+     "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+     "адреса": ["https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"]
+    }
+   ]
+  },
+  {
+   "id": "pyannote-segmentation-3-0",
+   "название": "pyannote segmentation 3.0",
+   "служебная": true,
+   "вид": "pyannote",
+   "лицензия": "MIT, CNRS (pyannote)",
+   "ссылка": "https://github.com/pyannote/pyannote-audio",
+   "файлы": [
+    {
+     "имя": "model.onnx",
+     "размер": 5992913,
+     "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
+     "адреса": ["https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/9403a6902bb58e3d5ae8c7e77c3422de279db2e0/model.onnx"]
+    }
+   ],
+   "архив": {
+    "имя": "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+    "размер": 6958444,
+    "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+    "адреса": ["https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"]
+   }
+  },
+  {
+   "id": "wespeaker-voxceleb-resnet34",
+   "название": "WeSpeaker ResNet34 (VoxCeleb)",
+   "служебная": true,
+   "вид": "speaker_embedding",
+   "лицензия": "CC-BY-4.0, WeSpeaker",
+   "ссылка": "https://github.com/wenet-e2e/wespeaker",
+   "файлы": [
+    {
+     "имя": "wespeaker_en_voxceleb_resnet34_LM.onnx",
+     "размер": 26530550,
+     "sha256": "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012",
+     "адреса": ["https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/0743f301363dec56491a490f6d6cbc9d67f9a3bf/wespeaker_en_voxceleb_resnet34_LM.onnx", "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx"]
+    }
+   ]
+  }
+ ]
+}

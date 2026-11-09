@@ -1,0 +1,46 @@
+# environment and build
+.venv/
+__pycache__/
+build/
+dist/
+.coverage
+htmlcov/
+# meeting recordings and everything made from them: customer data never goes into Git
+записи/
+*.flac
+*.wav
+*.mp3
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.ogg
+*.opus
+*.aac
+*.wma
+*.mov
+*.avi
+scribe.json
+фразы.json
+имена.json
+метки.json
+встреча.json
+расшифровка.md
+протокол*.md
+ошибка.txt
+запись.json
+термины.txt
+источник.txt
+скрытые_данные.json
+# settings, logs and secrets
+настройки.json
+*.log
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*token*.txt
+# samples of files of earlier versions for the compatibility test: made-up data, not real meetings
+!tests/fixtures/legacy/**

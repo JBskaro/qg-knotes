@@ -1,0 +1,4 @@
+{
+ "Движок распознавания аварийно завершился на модели «{title}» (код {code}). Если это повторяется, выберите другую модель.": "The recognition engine crashed on the \"{title}\" model (code {code}). If it keeps happening, choose another model.",
+ "Движок распознавания завис и остановлен. Если это повторяется, выберите модель поменьше.": "The recognition engine hung and was stopped. If it keeps happening, choose a smaller model."
+}

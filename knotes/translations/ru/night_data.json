@@ -1,0 +1,7 @@
+{
+ "The settings file was corrupted, so the app started with default settings. Couldn't save the corrupted file aside: {path}.": "Файл настроек был испорчен, программа начала с настроек по умолчанию. Отложить испорченный файл не удалось: {path}.",
+ "Hide personal data from the cloud model": "Скрывать личные данные от облачной модели",
+ "Phones, e-mails, INN, SNILS, passports, card and account numbers and addresses go to a cloud minutes model and to your AI assistant as labels like [PHONE_1]; the minutes on disk get the real values back. A model on this computer or in your network gets the text as is. Audio sent to cloud speech recognition can't be hidden.": "Телефоны, e-mail, ИНН, СНИЛС, паспорта, номера карт и счетов, адреса уходят облачной модели протоколов и вашему помощнику ИИ метками вроде [ТЕЛЕФОН_1]; в протокол на диске возвращаются настоящие значения. Модель на этом компьютере или в вашей сети получает текст как есть. Звук для облачного распознавания скрыть нельзя.",
+ "Hide people's names too": "Скрывать и имена людей",
+ "Names of participants and speakers and surnames from the vocabulary become labels too. The model then writes full names and task assignees worse: names come back in the nominative case.": "Имена участников и говорящих и фамилии из словаря тоже заменяются метками. Модель тогда хуже пишет полные имена и исполнителей задач: имена возвращаются в именительном падеже."
+}

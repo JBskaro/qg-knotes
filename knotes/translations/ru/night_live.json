@@ -1,0 +1,13 @@
+{
+ "Now": "Сейчас",
+ "Click a phrase to put it into the notes with its minute": "Щелкните фразу, чтобы вставить ее в заметки с минутой записи",
+ "Ask about what was said: what did the client promise to send?": "Спросите о сказанном: что клиент обещал прислать?",
+ "Ask": "Спросить",
+ "Asking…": "Спрашиваю…",
+ "Phrases appear here about half a minute after they are said": "Фразы появляются здесь примерно через полминуты после того, как прозвучали",
+ "Recognized up to {time}": "Распознано до {time}",
+ "Transcript during the meeting stopped: {reason} The recording goes on.": "Расшифровка во время встречи остановлена: {reason} Запись идет дальше.",
+ "Nothing has been recognized yet. Ask again in half a minute.": "Пока ничего не распознано. Спросите еще раз через полминуты.",
+ "Transcript during the meeting": "Расшифровка во время встречи",
+ "{reason} A copy of the notes: {copy_}": "{reason} Копия заметок: {copy_}"
+}

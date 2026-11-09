@@ -1,0 +1,8 @@
+{
+ "Prepare questions": "Подготовить вопросы",
+ "Preparing…": "Готовлю…",
+ "The minutes model suggests questions for the client by the meeting kind and a checklist of what to request before the meeting. It gets \"About the project\", the prep and open questions of past meetings": "Модель протоколов предложит вопросы клиенту по виду встречи и чек-лист, что запросить до встречи. Ей уходят «О проекте», подготовка и открытые вопросы прошлых встреч",
+ "Nothing new: the suggested questions are already in the prep or the agenda": "Нового нет: предложенные вопросы уже есть в подготовке или повестке",
+ "Added to the prep: {n}. Edit them as you need": "Добавлено в подготовку: {n}. Поправьте их, как нужно",
+ "Meeting prep": "Подготовка к встрече"
+}

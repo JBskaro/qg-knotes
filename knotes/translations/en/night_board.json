@@ -1,0 +1,11 @@
+{
+ "Как завести свои колонки и метки на доске?": "How do I set up my own columns and labels on the board?",
+ "Нажмите **Настроить доску** над доской. Кнопка есть на любой доске, и на доске всех проектов тоже.": "Click **Set up the board** above the board. Every board has it, the board of all projects too.",
+ "На вкладке «Колонки» выберите проект: колонки у каждого проекта свои.": "On the Columns tab choose the project: each project has its own columns.",
+ "Колонки перетаскивают за значок слева, название правят прямо в строке, корзина удаляет колонку. «+ Добавить колонку» заводит новую, например «Ждет ответа клиента» или «На проверке». Все сохраняется сразу.": "Drag columns by the handle on the left, edit a name right in its row, the trash deletes a column. \"+ Add column\" adds a new one, for example \"Waiting for the client\" or \"In review\". Everything is saved at once.",
+ "Вид колонки задает, что считается сделанным: «Сделать», «В работе» или «Готово». По виду считаются открытые задачи, повестка встречи и ответы помощнику ИИ.": "The column category sets what counts as done: \"To do\", \"In progress\" or \"Done\". Open tasks, the meeting agenda and the answers to the AI assistant go by the category.",
+ "При удалении колонки ее карточки переносятся в выбранную колонку, по умолчанию в первую того же вида.": "When a column is deleted, its cards move to the column you choose, by default the first one of the same category.",
+ "На вкладке «Метки» название правят прямо в строке, цвет меняют щелчком по кружку, корзина снимает метку со всех карточек. Метки общие для всех проектов.": "On the Labels tab edit a name right in its row, click the circle to change the color, the trash takes the label off every card. Labels are shared by all projects.",
+ "Название колонки можно поправить и на доске проекта, дважды щелкнув по нему. На доске всех проектов три основные колонки, а у карточки из своей колонки видно ее название. Последнюю колонку какого-то вида удалить нельзя.": "You can also fix a column name on a project board by double-clicking it. The board of all projects has the three base columns, and a card from a project column shows its name. The last column of a category can't be deleted.",
+ "карточка|карточки|карточек": "card|cards"
+}

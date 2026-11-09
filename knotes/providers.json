@@ -1,0 +1,120 @@
+{
+  "распознавание": [
+    {
+      "id": "openrouter",
+      "название": "OpenRouter",
+      "вид": "openrouter",
+      "адрес": "https://openrouter.ai/api/v1",
+      "сайт_ключа": "openrouter.ai",
+      "модель": "elevenlabs/scribe-v2",
+      "модели": [["elevenlabs/scribe-v2", "ElevenLabs Scribe v2"]],
+      "модели_запрос": "/models?output_modalities=transcription",
+      "ключ": "OpenRouter",
+      "переменная": "OPENROUTER_API_KEY",
+      "проверка": "/key",
+      "остаток": "/key",
+      "счет": "/credits",
+      "проверен": true,
+      "предел_мб": 25
+    },
+    {
+      "id": "локально",
+      "название": "На этом компьютере",
+      "вид": "локально",
+      "адрес": "",
+      "модель": "gigaam-v3-ctc-punct-int8",
+      "ключ_нужен": false,
+      "проверен": true
+    },
+    {
+      "id": "nexara",
+      "название": "Nexara (Россия)",
+      "вид": "форма",
+      "адрес": "https://api.nexara.ru/v1",
+      "сайт_ключа": "nexara.ru",
+      "модель": "whisper-1",
+      "модели": ["whisper-1", "nexara-ru"],
+      "ключ": "Nexara",
+      "переменная": "NEXARA_API_KEY",
+      "поля": {"task": "diarize", "response_format": "verbose_json"}
+    },
+    {
+      "id": "openai",
+      "название": "OpenAI",
+      "вид": "форма",
+      "адрес": "https://api.openai.com/v1",
+      "сайт_ключа": "platform.openai.com",
+      "модель": "gpt-4o-transcribe-diarize",
+      "модели": ["gpt-4o-transcribe-diarize", "whisper-1"],
+      "ключ": "OpenAI",
+      "переменная": "OPENAI_API_KEY",
+      "проверка": "/models",
+      "поля": {"response_format": "verbose_json"},
+      "поля_моделей": {"gpt-4o-transcribe-diarize": {"response_format": "diarized_json", "chunking_strategy": "auto"}}
+    },
+    {
+      "id": "свой",
+      "название": "Свой сервер (OpenAI API)",
+      "проверен": true,
+      "вид": "форма",
+      "адрес": "",
+      "пример": "http://localhost:8000/v1",
+      "модель": "",
+      "модели_запрос": "/models",
+      "ключ": "Свой сервер",
+      "ключ_нужен": false,
+      "проверка": "/models",
+      "поля": {"response_format": "verbose_json"}
+    }
+  ],
+  "протоколы": [
+    {
+      "id": "openrouter",
+      "название": "OpenRouter",
+      "вид": "openrouter",
+      "адрес": "https://openrouter.ai/api/v1",
+      "сайт_ключа": "openrouter.ai",
+      "модель": "anthropic/claude-sonnet-5.5",
+      "модели": [["anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5"], ["anthropic/claude-opus-5.5", "Claude Opus 5.5"],
+                 ["anthropic/claude-haiku-5.5", "Claude Haiku 5.5"], ["openai/gpt-5.6-sol", "GPT-5.6 Sol"],
+                 ["google/gemini-3.8-flash", "Gemini 3.8 Flash"]],
+      "ключ": "OpenRouter",
+      "переменная": "OPENROUTER_API_KEY",
+      "проверка": "/key",
+      "проверен": true
+    },
+    {
+      "id": "openai",
+      "название": "OpenAI",
+      "вид": "чат",
+      "адрес": "https://api.openai.com/v1",
+      "сайт_ключа": "platform.openai.com",
+      "модель": "gpt-5.6-sol",
+      "модели_запрос": "/models",
+      "ключ": "OpenAI",
+      "переменная": "OPENAI_API_KEY",
+      "проверка": "/models"
+    },
+    {
+      "id": "свой",
+      "название": "Ollama на своем сервере",
+      "вид": "чат",
+      "адрес": "http://localhost:11434/v1",
+      "модель": "",
+      "модели_запрос": "/models",
+      "ключ": "Сервер протоколов",
+      "ключ_нужен": false,
+      "проверка": "/models"
+    },
+    {
+      "id": "lmstudio",
+      "название": "LM Studio на этом компьютере",
+      "вид": "чат",
+      "адрес": "http://localhost:1234/v1",
+      "модель": "",
+      "модели_запрос": "/models",
+      "ключ_нужен": false,
+      "проверка": "/models"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+ "The update was not installed and the previous version could not be put back. Its files are in {folder}: rename {files} back (without .old) or download the program again.": "Обновление не установилось, и прежнюю версию не удалось вернуть. Ее файлы лежат в {folder}: переименуйте {files} обратно (без .old) или скачайте программу заново.",
+ "The update can't replace the program files while other programs use them. Close Claude Desktop (it starts QG Knotes for its tools) and other QG Knotes windows, then press Retry.": "Обновление не может заменить файлы программы, пока ими пользуются другие программы. Закройте Claude Desktop (он запускает QG Knotes для своих инструментов) и другие окна QG Knotes, затем нажмите «Повторить».",
+ "The update was not installed: the running program did not close within a minute. Close it and update again.": "Обновление не установилось: работающая программа не закрылась за минуту. Закройте ее и обновите снова.",
+ "GitHub did not give a checksum for {name}, so the update can't be checked and was not downloaded. Try again later or download it from the release page.": "GitHub не дал контрольной суммы для {name}, поэтому обновление нельзя проверить, и оно не скачано. Повторите позже или скачайте его со страницы выпуска.",
+ "{title} returned the transcript in an unexpected format: no words with their times. Check the server address and the model in Settings.": "{title} вернул расшифровку в неожиданном виде: нет слов с их временем. Проверьте адрес сервера и модель в настройках.",
+ "{title} did not manage to take the recording whole (code {code})": "{title} не успел принять запись целиком (код {code})",
+ "{title} did not take even a {minutes}-minute piece of the recording in time. Try again later or choose another model in Settings.": "{title} не успел принять даже кусок записи в {minutes} минут. Повторите позже или выберите другую модель в настройках.",
+ "the server answered with a web page": "сервер ответил веб-страницей",
+ "The request was cancelled: the program is closing.": "Запрос отменен: программа закрывается.",
+ "This meeting's audio is gone: it was deleted after transcription.": "Звука этой встречи нет: его удалили после расшифровки.",
+ "Couldn't play. {reason}": "Не удалось проиграть. {reason}"
+}

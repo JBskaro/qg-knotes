@@ -1,0 +1,49 @@
+[project]
+name = "qg-knotes"
+version = "0.22.0"
+description = "Records online meetings without a bot, transcribes them with speaker labels and writes minutes"
+readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+requires-python = ">=3.13"
+dependencies = [
+    "PyAudioWPatch",
+    "pycaw",
+    "comtypes",
+    "numpy",
+    "imageio-ffmpeg",
+    "keyring",
+    "PySide6-Essentials",
+    "sherpa-onnx==2.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+# Quality standard: complexity, length and parameters of functions, dead code, reliability, security, types
+select = ["E", "W", "F", "B", "C90", "PLR0912", "PLR0913", "PLR0915", "ARG", "BLE", "S", "ANN001", "ANN201",
+          "SIM", "RET", "UP"]
+# ffmpeg and curl are called with an argument list, without a shell
+ignore = ["S603", "S607"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 5
+max-branches = 12
+max-statements = 50
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ANN", "ARG"]
+
+[tool.coverage.run]
+source = ["knotes"]
+# Windows are checked with screenshots and live runs, not with unit tests
+omit = ["knotes/ui/*", "knotes/app.py", "knotes/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

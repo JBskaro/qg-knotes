@@ -1,0 +1,7 @@
+{
+ "Я": "Me",
+ "Собеседники": "Others",
+ "Участники": "Participants",
+ "Пока идет запись, речь распознается каждые полминуты: в блокноте видны последние фразы, и модели протокола можно задать вопрос по уже сказанному. Работает с распознаванием на этом компьютере и нагружает процессор. Итоговая расшифровка после встречи делается как обычно.": "While recording, speech is recognized every half minute: the notepad shows the latest phrases, and you can ask the minutes model about what has been said. Works with recognition on this computer and loads the processor. The final transcript after the meeting is made as usual.",
+ "Недоступно при облачном распознавании: запись пришлось бы оплачивать дважды. Выберите распознавание на этом компьютере.": "Not available with cloud recognition: the recording would be paid for twice. Choose recognition on this computer."
+}

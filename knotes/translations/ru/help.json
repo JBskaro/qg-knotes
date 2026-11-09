@@ -1,0 +1,9 @@
+{
+ "Open “{section}” in Settings": "Открыть раздел «{section}» в настройках",
+ "Search help  Ctrl+F": "Поиск по справке  Ctrl+F",
+ "Getting started": "Начало работы",
+ "Show tips again": "Показать подсказки заново",
+ "Choose a topic and click a question. To search all of the help, type in the box above.": "Выберите тему и щелкните вопрос. Поиск по всей справке - в строке сверху.",
+ "Answers for “{query}”: {n}": "По запросу «{query}» нашлось ответов: {n}",
+ "Nothing found for “{query}”. Try another word or clear the search to see the topics.": "По запросу «{query}» ничего не нашлось. Попробуйте другое слово или очистите поиск, чтобы увидеть темы."
+}

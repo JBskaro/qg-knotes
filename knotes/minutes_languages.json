@@ -1,0 +1,25 @@
+{
+ "ru": {"имя": "русский", "буквы": "а-яё"},
+ "en": {
+  "имя": "английский",
+  "буквы": "a-z",
+  "стиль": "Кавычки \"\", дробные числа с точкой (15.25), даты ДД.ММ.ГГГГ (14.10.2026).",
+  "фразы": {
+   "# Итоги встречи ДД.ММ.ГГГГ по <теме>": "# Minutes of the meeting on DD.MM.YYYY about <topic>",
+   "Я": "Me",
+   "Добрый день!": "Hello,",
+   "Направляем итоги встречи ДД.ММ.ГГГГ по <теме>.": "Here are the minutes of our meeting on DD.MM.YYYY about <topic>.",
+   "Участники - <имена через запятую>": "Participants - <names separated by commas>",
+   "Расшифровка - <имя папки встречи>, расшифровка.md": "Transcript - <meeting folder name>, расшифровка.md",
+   "Предварительно, <кто подтвердит>.": "Tentative, <who confirms>.",
+   "Просим сообщить": "Please let us know",
+   "К решению N.": "On decision N.",
+   "К задаче N.": "On task N.",
+   "К вопросу N.": "On question N.",
+   "Проверить по записи": "Check the recording",
+   "Проверить написание <слово>": "Check the spelling of <word>",
+   "Кто - не назначен": "Who - not assigned",
+   "В инструкцию. <что добавить>.": "For the manual. <what to add>."
+  }
+ }
+}

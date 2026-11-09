@@ -1,0 +1,17 @@
+{
+ "Встреча {date}": "Meeting {date}",
+ "Вчера": "Yesterday",
+ "Готова": "Ready",
+ "Записи встреч (*.mp4 *.mkv *.webm *.mov *.avi *.m4a *.mp3 *.wav *.ogg *.flac);;Все файлы (*)": "Meeting recordings (*.mp4 *.mkv *.webm *.mov *.avi *.m4a *.mp3 *.wav *.ogg *.flac);;All files (*)",
+ "На этой неделе": "This week",
+ "Настройки": "Settings",
+ "Не отправлена": "Not sent",
+ "Не распознан": "Not transcribed",
+ "Открыть расшифровку": "Open transcript",
+ "Ошибка": "Error",
+ "Прервана": "Interrupted",
+ "Раньше": "Earlier",
+ "Речь": "Speech",
+ "Сегодня": "Today",
+ "★ Отметка": "★ Mark"
+}
