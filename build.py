@@ -110,15 +110,18 @@ def ico_icon(path: pathlib.Path) -> None:
 
 
 def lighten(folder: pathlib.Path) -> None:
-    """Removes from the build what widget windows do not need: software OpenGL and Qt translations other than
-    Russian; from sherpa-onnx, the wrappers for other languages."""
-    qt = folder / "_internal" / "PySide6"
+    """Removes unused binaries and host ICU libraries that conflict with Windows ICU."""
+    internal = folder / "_internal"
+    qt = internal / "PySide6"
     (qt / "opengl32sw.dll").unlink(missing_ok=True)
     for translator in (qt / "translations").glob("*.qm"):
         if not translator.stem.endswith("_ru"):
             translator.unlink()
     for extra in SHERPA_EXTRA:
-        (folder / "_internal" / "sherpa_onnx" / "lib" / extra).unlink(missing_ok=True)
+        (internal / "sherpa_onnx" / "lib" / extra).unlink(missing_ok=True)
+    (internal / "icuuc.dll").unlink(missing_ok=True)
+    for data in internal.glob("icudt*.dll"):
+        data.unlink()
 
 
 def match_qt_crt(folder: pathlib.Path) -> None:
@@ -339,3 +342,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
