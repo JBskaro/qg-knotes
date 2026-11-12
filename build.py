@@ -46,8 +46,6 @@ REGISTRY_VIEWS = (
 )
 # _sherpa_onnx.pyd takes only onnxruntime.dll from its folder: the C and C++ wrappers for other languages are not needed
 SHERPA_EXTRA = ("sherpa-onnx-c-api.dll", "sherpa-onnx-cxx-api.dll")
-# Python embeds an older VC runtime in _internal; Windows loads it before PySide6's and QtWidgets fails with
-# "The specified procedure could not be found". Overwrite with the copies that ship next to Qt.
 CRT_FROM_QT = (
     "VCRUNTIME140.dll",
     "VCRUNTIME140_1.dll",
@@ -124,8 +122,6 @@ def lighten(folder: pathlib.Path) -> None:
 
 
 def match_qt_crt(folder: pathlib.Path) -> None:
-    """Replaces the VC runtime in _internal with the versions from PySide6 so Qt is not loaded against Python's older
-    CRT."""
     internal = folder / "_internal"
     qt = internal / "PySide6"
     for name in CRT_FROM_QT:
