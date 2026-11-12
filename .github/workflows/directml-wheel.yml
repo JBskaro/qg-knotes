@@ -1,0 +1,37 @@
+name: Build DirectML wheel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Fetch pinned sherpa-onnx source
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch v2.0.0 https://github.com/k2-fsa/sherpa-onnx.git sherpa-onnx
+          $actual = git -C sherpa-onnx rev-parse HEAD
+          if ($actual -ne '8abb7c8f87eae85b2e75f9a4115236c978980add') {
+            throw "Unexpected sherpa-onnx commit: $actual"
+          }
+      - name: Build Python wheel with DirectML
+        working-directory: sherpa-onnx
+        shell: pwsh
+        env:
+          SHERPA_ONNX_CMAKE_ARGS: -DCMAKE_BUILD_TYPE=Release -DSHERPA_ONNX_ENABLE_DIRECTML=ON -DSHERPA_ONNX_ENABLE_BINARY=OFF -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF
+        run: |
+          python -m pip install --upgrade setuptools wheel
+          python setup.py bdist_wheel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-2.0.0-directml-win-amd64
+          path: sherpa-onnx/dist/*.whl
+          if-no-files-found: error
