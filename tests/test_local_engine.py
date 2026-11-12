@@ -374,6 +374,9 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(providers_used, ["directml", "cpu"])
         self.assertEqual(so.open_count["from_nemo_ctc"]["provider"], "cpu")
         self.assertFalse(local_engine._use_directml(dataclasses.replace(model, id_="other-model")))
+        so = FakeSherpa([])
+        local_engine.Engine(dataclasses.replace(model, use_gpu=False), None, so)
+        self.assertEqual(so.open_count["from_nemo_ctc"].get("provider", "cpu"), "cpu")
 
     def test_all_model_kinds(self):
         """Each kind is opened by its own sherpa-onnx constructor: files by role, its own params, the meeting language

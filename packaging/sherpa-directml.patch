@@ -27,3 +27,85 @@ index c20d2c9..f887f43 100644
  
      install(FILES ${onnxruntime_lib_files} DESTINATION bin)
  
+diff --git a/sherpa-onnx/csrc/session.cc b/sherpa-onnx/csrc/session.cc
+index f911ddd..c41aabb 100755
+--- a/sherpa-onnx/csrc/session.cc
++++ b/sherpa-onnx/csrc/session.cc
+@@ -26,6 +26,9 @@
+ #endif
+
+ #if defined(_WIN32) && SHERPA_ONNX_ENABLE_DIRECTML == 1
++#include <dxgi1_6.h>
++#include <wrl/client.h>
++#pragma comment(lib, "dxgi.lib")
+ #include "dml_provider_factory.h"  // NOLINT
+ #endif
+
+@@ -35,6 +38,49 @@
+
+ namespace sherpa_onnx {
+
++#if defined(_WIN32) && SHERPA_ONNX_ENABLE_DIRECTML == 1
++// DirectML takes an index in EnumAdapters order, not GPU preference order.
++static int32_t DirectMLDeviceIndex() {
++  using Microsoft::WRL::ComPtr;
++  ComPtr<IDXGIFactory1> factory;
++  if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(factory.GetAddressOf())))) {
++    return 0;
++  }
++
++  ComPtr<IDXGIFactory6> preferred_factory;
++  if (FAILED(factory.As(&preferred_factory))) {
++    return 0;
++  }
++
++  for (UINT i = 0;; ++i) {
++    ComPtr<IDXGIAdapter1> preferred;
++    if (FAILED(preferred_factory->EnumAdapterByGpuPreference(
++            i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
++            IID_PPV_ARGS(preferred.GetAddressOf())))) {
++      return 0;
++    }
++    DXGI_ADAPTER_DESC1 preferred_desc{};
++    if (FAILED(preferred->GetDesc1(&preferred_desc)) ||
++        (preferred_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
++      continue;
++    }
++
++    for (UINT index = 0;; ++index) {
++      ComPtr<IDXGIAdapter> adapter;
++      if (FAILED(factory->EnumAdapters(index, adapter.GetAddressOf()))) {
++        break;
++      }
++      DXGI_ADAPTER_DESC desc{};
++      if (SUCCEEDED(adapter->GetDesc(&desc)) &&
++          desc.AdapterLuid.LowPart == preferred_desc.AdapterLuid.LowPart &&
++          desc.AdapterLuid.HighPart == preferred_desc.AdapterLuid.HighPart) {
++        return static_cast<int32_t>(index);
++      }
++    }
++  }
++}
++#endif
++
+ static void OrtStatusFailure(OrtStatus *status, const char *s) {
+   const auto &api = Ort::GetApi();
+   const char *msg = api.GetErrorMessage(status);
+@@ -445,11 +491,15 @@ Ort::SessionOptions GetSessionOptionsImpl(
+ #if defined(_WIN32) && SHERPA_ONNX_ENABLE_DIRECTML == 1
+       sess_opts.DisableMemPattern();
+       sess_opts.SetExecutionMode(ORT_SEQUENTIAL);
+-      int32_t device_id = 0;
++      const int32_t device_id = DirectMLDeviceIndex();
++      const auto &api = Ort::GetApi();
+       OrtStatus *status =
+           OrtSessionOptionsAppendExecutionProvider_DML(sess_opts, device_id);
++      if (status && device_id != 0) {
++        api.ReleaseStatus(status);
++        status = OrtSessionOptionsAppendExecutionProvider_DML(sess_opts, 0);
++      }
+       if (status) {
+-        const auto &api = Ort::GetApi();
+         const char *msg = api.GetErrorMessage(status);
+         SHERPA_ONNX_LOGE("Failed to enable DirectML: %s. Fallback to cpu", msg);
+         api.ReleaseStatus(status);

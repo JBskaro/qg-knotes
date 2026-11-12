@@ -73,6 +73,7 @@ class Settings:
     provider_retention: bool = False
     speaker_diarization: bool = True  # local: tell the other participants apart
     live_transcript: bool = False  # local: recognize during the recording too, see live.py
+    local_gpu: bool = True  # use GPU acceleration for supported speech models
     models_mirror: str = ""  # address instead of huggingface.co for model downloads, e.g. https://hf-mirror.com
     record_screen: bool = False  # record the meeting screen to видео.mp4 along with the sound
     screen_capture: str = (

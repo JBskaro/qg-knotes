@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 class LocalModelRows(QObject):
-    """The two rows, shown by the section only for the "On this computer" preset. A QObject: a download that outlives
+    """Rows shown by the section only for the "On this computer" preset. A QObject: a download that outlives
     the settings stops telling it when the settings are gone."""
 
     def __init__(self, editor: Editor, speech: ConnectionBlock, page: QWidget):
@@ -35,6 +35,7 @@ class LocalModelRows(QObject):
         self.download.clicked.connect(lambda: self.pick_model(download=True))
         self.switch_to = QPushButton(tr("Choose a model…"))
         self.switch_to.clicked.connect(self.pick_model)
+        self.device = editor.segments([(False, tr("Processor (CPU)")), (True, tr("Graphics card (GPU)"))], "local_gpu")
         diarization = editor.switch("speaker_diarization")
         diarization.toggled.connect(self.enable_diarization)
         self.diarization_status = QLabel()
@@ -42,12 +43,16 @@ class LocalModelRows(QObject):
         self.diarization_status.hide()
         self.rows = [
             row(self.model_label, self.download, self.switch_to),
+            self.device,
             column(row(diarization), self.diarization_status),
         ]
 
     def into_form(self, form_layout: QFormLayout) -> None:
         for row_label_, key_, line in zip(
-            (tr("Model"), tr("Tell speakers apart")), ("модели", "разметка"), self.rows, strict=True
+            (tr("Model"), tr("Recognition device"), tr("Tell speakers apart")),
+            ("модели", "устройство", "разметка"),
+            self.rows,
+            strict=True,
         ):
             form_layout.addRow(row_label(row_label_, tr(HINTS[key_])), line)
 
@@ -56,6 +61,9 @@ class LocalModelRows(QObject):
 
     def refresh(self) -> None:
         state = self.state()
+        can_use_gpu = state.model is not None and models.supports_gpu(state.model.kind, state.model.id)
+        self.device.setEnabled(can_use_gpu)
+        self.device.select(can_use_gpu and self._editor.settings.local_gpu)
         if state.model is None:
             self.model_label.setText(tr("No model selected"))
             self.download.hide()

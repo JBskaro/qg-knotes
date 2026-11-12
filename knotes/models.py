@@ -15,6 +15,7 @@ import logging
 import pathlib
 import re
 import shutil
+import sys
 import tarfile
 import threading
 import time
@@ -360,6 +361,11 @@ def find(id_: str, folder: pathlib.Path) -> Model:
         if model.id == id_:
             return model
     raise ModelError(tr("Model {id_} is neither in the catalog nor among your own models", id_=id_))
+
+
+def supports_gpu(kind: str, model_id: str) -> bool:
+    """Windows builds enable DirectML for GigaAM speech recognition."""
+    return sys.platform == "win32" and kind == "nemo_ctc" and model_id.startswith("gigaam-")
 
 
 def service_items(folder: pathlib.Path, diarization: bool = False) -> list[Model]:

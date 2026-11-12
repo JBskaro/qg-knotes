@@ -91,6 +91,7 @@ class Model:
     language: str = ""
     id_: str = ""
     custom: bool = False
+    use_gpu: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -227,8 +228,7 @@ def _sherpa() -> object:
 
 
 def _use_directml(model: Model) -> bool:
-    """Use DirectML for the bundled GigaAM model on Windows; other models keep their existing CPU path."""
-    return sys.platform == "win32" and model.kind == "nemo_ctc" and model.id_.startswith("gigaam-")
+    return model.use_gpu and models.supports_gpu(model.kind, model.id_)
 
 
 class Engine:

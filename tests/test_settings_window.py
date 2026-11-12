@@ -9,7 +9,7 @@ import types
 import unittest
 from unittest import mock
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from knotes import ics_calendar, app, providers, language
 from knotes import settings
@@ -101,6 +101,25 @@ class TestSettingsWindow(unittest.TestCase):
         self.window.show_section("протоколы")
         self.assertEqual(self.window.sections.currentItem().text(), "Протоколы")
         self.assertEqual(self.window.pages.currentIndex(), 1)
+
+    def test_recognition_device_choice_is_saved_for_supported_models(self):
+        device = self.window.recognition.local_model.device
+        cpu, gpu = device.findChildren(QPushButton)
+        self.assertTrue(gpu.isChecked())
+        cpu.click()
+        self.assertFalse(self.changes[-1].local_gpu)
+        gpu.click()
+        self.assertTrue(self.changes[-1].local_gpu)
+
+        speech = self.window.connections["распознавание"]
+        original_model = speech.chosen_model
+        speech.set_model("whisper-large-v3-turbo-int8")
+        self.assertTrue(cpu.isChecked())
+        self.assertFalse(device.isEnabled())
+        self.assertTrue(self.changes[-1].local_gpu)
+        speech.set_model(original_model)
+        self.assertTrue(device.isEnabled())
+        self.assertTrue(gpu.isChecked())
 
     def test_opening_flashes_no_window(self):
         """Every field is placed in the window before it is shown, with any preset: the refresh button, the shared key

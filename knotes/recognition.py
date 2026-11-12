@@ -64,6 +64,7 @@ class Params:
     cancel: threading.Event | None = dataclasses.field(default=None, compare=False)  # stops the engine
     # on this computer: one engine process for track after track (during the meeting); None: a process per track
     engine: local_engine.Server | None = dataclasses.field(default=None, compare=False, repr=False)
+    local_gpu: bool = True
 
     @property
     def final_model(self) -> str:
@@ -83,6 +84,7 @@ def params(config: settings.Settings) -> Params:
         config.speaker_diarization,
         settings.models_folder(),
         config.models_mirror,
+        local_gpu=config.local_gpu,
     )
 
 
@@ -323,7 +325,14 @@ def _local(path: pathlib.Path, params_: Params, progress: Callable[[int, int], N
     )
     files = {role: str(p_) for role, p_ in models.engine_files(params_.models_folder, model).items()}
     to_engine = local_engine.Model(
-        files, model.kind, str(paths["silero_vad"]), tr(model.title), params_.language, model.id, model.custom
+        files,
+        model.kind,
+        str(paths["silero_vad"]),
+        tr(model.title),
+        params_.language,
+        model.id,
+        model.custom,
+        use_gpu=params_.local_gpu,
     )
     run = params_.engine.recognize if params_.engine else local_engine.recognize_in_process
     return run(path, to_engine, diarization, progress, params_.cancel)
