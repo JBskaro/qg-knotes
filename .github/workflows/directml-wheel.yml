@@ -11,6 +11,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 120
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -22,6 +23,7 @@ jobs:
           if ($actual -ne '8abb7c8f87eae85b2e75f9a4115236c978980add') {
             throw "Unexpected sherpa-onnx commit: $actual"
           }
+          git -C sherpa-onnx apply "$env:GITHUB_WORKSPACE/packaging/sherpa-directml.patch"
       - name: Build Python wheel with DirectML
         working-directory: sherpa-onnx
         shell: pwsh
