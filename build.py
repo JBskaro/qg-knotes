@@ -46,6 +46,13 @@ REGISTRY_VIEWS = (
 )
 # _sherpa_onnx.pyd takes only onnxruntime.dll from its folder: the C and C++ wrappers for other languages are not needed
 SHERPA_EXTRA = ("sherpa-onnx-c-api.dll", "sherpa-onnx-cxx-api.dll")
+CRT_FROM_QT = (
+    "VCRUNTIME140.dll",
+    "VCRUNTIME140_1.dll",
+    "MSVCP140.dll",
+    "MSVCP140_1.dll",
+    "MSVCP140_2.dll",
+)
 # License of onnxruntime inside sherpa-onnx (MIT): the sherpa-onnx-core package does not include its text
 ONNXRUNTIME = """MIT License
 
@@ -112,6 +119,15 @@ def lighten(folder: pathlib.Path) -> None:
             translator.unlink()
     for extra in SHERPA_EXTRA:
         (folder / "_internal" / "sherpa_onnx" / "lib" / extra).unlink(missing_ok=True)
+
+
+def match_qt_crt(folder: pathlib.Path) -> None:
+    internal = folder / "_internal"
+    qt = internal / "PySide6"
+    for name in CRT_FROM_QT:
+        source = qt / name
+        if source.is_file():
+            shutil.copy2(source, internal / name)
 
 
 def licenses(folder: pathlib.Path) -> None:
@@ -311,6 +327,7 @@ def main() -> int:
     if result.returncode:
         return result.returncode
     lighten(DONE / NAME)
+    match_qt_crt(DONE / NAME)
     licenses(DONE / NAME)
     archive = shutil.make_archive(str(RESULT / f"QG-Knotes-{VERSION}"), "zip", DONE, NAME)
     if not install(DONE / NAME):

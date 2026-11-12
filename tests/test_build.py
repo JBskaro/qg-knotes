@@ -79,5 +79,20 @@ class TestInstall(unittest.TestCase):
         self.assertTrue(build._close_running(self.new_build.parent / "нет", "QG Knotes.exe"))
 
 
+class TestMatchQtCrt(unittest.TestCase):
+    def test_replaces_python_crt_with_pyside_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            internal, qt = root / "_internal", root / "_internal" / "PySide6"
+            qt.mkdir(parents=True)
+            (internal / "VCRUNTIME140.dll").write_bytes(b"python-old")
+            (qt / "VCRUNTIME140.dll").write_bytes(b"qt-new")
+            (qt / "MSVCP140.dll").write_bytes(b"qt-msvcp")
+            build.match_qt_crt(root)
+            self.assertEqual((internal / "VCRUNTIME140.dll").read_bytes(), b"qt-new")
+            self.assertEqual((internal / "MSVCP140.dll").read_bytes(), b"qt-msvcp")
+            self.assertFalse((internal / "MSVCP140_2.dll").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
