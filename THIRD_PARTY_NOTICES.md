@@ -1,7 +1,8 @@
 # Third-party notices
 
 QG Knotes is licensed under the GNU General Public License version 3 (see `LICENSE`). The Windows build bundles the
-components below; each keeps its own license. Versions are the ones pinned in `requirements.lock`.
+components below; each keeps its own license. Python package versions are pinned in `requirements.lock`;
+the DirectML-enabled sherpa-onnx binary is built from the pinned 2.0.0 source in `.github/workflows/directml-wheel.yml`.
 
 ## Bundled in the program
 
@@ -12,6 +13,7 @@ components below; each keeps its own license. Versions are the ones pinned in `r
 | Qt libraries shipped with PySide6 | 6.12 | LGPL-3.0-only | https://www.qt.io/download-open-source |
 | sherpa-onnx, sherpa-onnx-core | 2.0.0 | Apache-2.0 | https://github.com/k2-fsa/sherpa-onnx |
 | ONNX Runtime (inside sherpa-onnx) | | MIT | https://github.com/microsoft/onnxruntime |
+| Microsoft DirectML redistributable | 1.15.0 | Microsoft DirectML Software License Terms; see `LICENSES/DirectML-LICENSE.txt` and `LICENSES/DirectML-ThirdPartyNotices.txt` | https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.0 |
 | NumPy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 (bundled OpenBLAS: BSD-3-Clause; GCC runtime: GPL-3.0 with the GCC Runtime Library Exception) | https://numpy.org |
 | PyAudioWPatch (with PortAudio) | 0.2.12.9 | Apache-2.0 (PortAudio: MIT) | https://github.com/s0d3s/PyAudioWPatch |
 | pycaw | 20260927 | MIT | https://github.com/AndreMiras/pycaw |
@@ -26,7 +28,7 @@ components below; each keeps its own license. Versions are the ones pinned in `r
 | PyInstaller bootloader | 6.22.3 | GPL-2.0-or-later with the bootloader exception | https://pyinstaller.org |
 
 The Windows build carries these texts in `_internal\licenses`: the GPL-3.0 of the program, this file, the
-LGPL-3.0 for Qt and PySide6, and the licenses of sherpa-onnx and ONNX Runtime.
+LGPL-3.0 for Qt and PySide6, and the licenses of sherpa-onnx, ONNX Runtime and DirectML.
 
 ### FFmpeg source code
 

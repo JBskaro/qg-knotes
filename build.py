@@ -119,6 +119,11 @@ def lighten(folder: pathlib.Path) -> None:
             translator.unlink()
     for extra in SHERPA_EXTRA:
         (internal / "sherpa_onnx" / "lib" / extra).unlink(missing_ok=True)
+    sherpa_lib = internal / "sherpa_onnx" / "lib"
+    (sherpa_lib / "DirectML.Debug.dll").unlink(missing_ok=True)
+    for required in ("DirectML.dll", "onnxruntime.dll"):
+        if not (sherpa_lib / required).is_file():
+            raise SystemExit(f"Missing {required}: build with the DirectML wheel from the GitHub workflow")
     (internal / "icuuc.dll").unlink(missing_ok=True)
     for data in internal.glob("icudt*.dll"):
         data.unlink()
@@ -135,12 +140,14 @@ def match_qt_crt(folder: pathlib.Path) -> None:
 
 def licenses(folder: pathlib.Path) -> None:
     """Puts the license texts into _internal\\licenses, which an update replaces with the program: the program's own
-    GPL-3.0, the third-party notices, LGPL-3.0 for Qt, sherpa-onnx (Apache-2.0) and onnxruntime (MIT)."""
+    GPL-3.0, the third-party notices, LGPL-3.0 for Qt, sherpa-onnx, ONNX Runtime and DirectML."""
     where_to = folder / "_internal" / "licenses"
     where_to.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / "LICENSE", where_to / "LICENSE.txt")
     shutil.copyfile(ROOT / "THIRD_PARTY_NOTICES.md", where_to / "THIRD_PARTY_NOTICES.md")
     shutil.copyfile(ROOT / "LICENSES" / "LGPL-3.0-only.txt", where_to / "LGPL-3.0.txt")
+    shutil.copyfile(ROOT / "LICENSES" / "DirectML-LICENSE.txt", where_to / "DirectML-LICENSE.txt")
+    shutil.copyfile(ROOT / "LICENSES" / "DirectML-ThirdPartyNotices.txt", where_to / "DirectML-ThirdPartyNotices.txt")
     sherpa = next(file for file in importlib.metadata.distribution("sherpa-onnx").files or [] if file.name == "LICENSE")
     shutil.copyfile(sherpa.locate(), where_to / "sherpa-onnx.txt")
     (where_to / "onnxruntime.txt").write_text(ONNXRUNTIME, encoding="utf-8")

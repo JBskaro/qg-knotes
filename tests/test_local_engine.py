@@ -352,6 +352,29 @@ class TestEngine(unittest.TestCase):
         self.assertTrue(params["enable_segment_timestamps"])
         self.assertEqual(so.open_count["разметка"].clustering.num_clusters, -1)  # speaker count is auto-detected
 
+    def test_gigaam_uses_directml_and_falls_back_to_cpu(self):
+        model = dataclasses.replace(self.model, id_="gigaam-v3-ctc-punct-int8")
+        self.assertTrue(local_engine._use_directml(model))
+        so = FakeSherpa([])
+        local_engine.Engine(model, None, so)
+        self.assertEqual(so.open_count["from_nemo_ctc"]["provider"], "directml")
+        so = FakeSherpa([])
+        original = so.OfflineRecognizer.from_nemo_ctc
+        providers_used = []
+
+        def open_view(**params):
+            providers_used.append(params["provider"])
+            if params["provider"] == "directml":
+                raise RuntimeError("DirectML is unavailable")
+            return original(**params)
+
+        so.OfflineRecognizer.from_nemo_ctc = open_view
+        with self.assertLogs(local_engine.log, "WARNING"):
+            local_engine.Engine(model, None, so)
+        self.assertEqual(providers_used, ["directml", "cpu"])
+        self.assertEqual(so.open_count["from_nemo_ctc"]["provider"], "cpu")
+        self.assertFalse(local_engine._use_directml(dataclasses.replace(model, id_="other-model")))
+
     def test_all_model_kinds(self):
         """Each kind is opened by its own sherpa-onnx constructor: files by role, its own params, the meeting language
         only for those that ask for it."""

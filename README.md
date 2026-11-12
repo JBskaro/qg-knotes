@@ -200,7 +200,8 @@ Windows 10 and 11 only, for now.
   and joined by time.
 - **Recognition on this computer**, the default for a new installation: the sherpa-onnx engine with GigaAM v3 (with
   punctuation) or Whisper large-v3-turbo, or any sherpa-onnx model from Hugging Face. Speakers are told apart with
-  pyannote segmentation and WeSpeaker; Silero VAD finds the speech.
+  pyannote segmentation and WeSpeaker; Silero VAD finds the speech. On Windows, built-in GigaAM tries DirectML on a
+  compatible DirectX 12 GPU and falls back to the CPU. Voice detection and speaker separation still use the CPU.
 - **Cloud recognition and minutes** through any service with an OpenAI-compatible API: OpenRouter (ElevenLabs Scribe
   v2 for speech, Claude Sonnet 5.5 for minutes), Nexara, OpenAI, Ollama, LM Studio or your own server.
 - **Screen recording** together with the sound: the meeting window, the monitor with it or a chosen monitor. The
@@ -260,7 +261,11 @@ py -3.13 -m venv .venv
 ```
 
 `check.py` is the quality guard (key scan, ruff, dead code, duplicated code, tests, coverage of the logic at least
-80%); `build.py` builds the portable version into `dist\` on exactly the library versions of `requirements.lock`, and
+80%). To build the Windows distribution, download the wheel artifact from the
+[DirectML workflow](.github/workflows/directml-wheel.yml) and install it into `.venv` with
+`.venv\Scripts\python.exe -m pip install --no-deps --force-reinstall <wheel-file>` after the pinned requirements. The workflow builds
+the wheel from a fixed sherpa-onnx commit and includes the DirectML runtime. `build.py` rejects a CPU-only wheel and
+builds the portable version into `dist\`, and
 the installer from `installer/qg-knotes.iss` when [Inno Setup](https://jrsoftware.org/isdl.php) 6.6 or newer is
 installed (without it, only the zip). The
 pictures on this page come from the real windows on made-up meetings: `docs/screenshots/make_screenshots.py`. See

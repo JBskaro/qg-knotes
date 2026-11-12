@@ -226,6 +226,11 @@ def _sherpa() -> object:
     return sherpa_onnx
 
 
+def _use_directml(model: Model) -> bool:
+    """Use DirectML for the bundled GigaAM model on Windows; other models keep their existing CPU path."""
+    return sys.platform == "win32" and model.kind == "nemo_ctc" and model.id_.startswith("gigaam-")
+
+
 class Engine:
     """sherpa-onnx for one model: speech cutting, chunk recognition, speaker diarization of the whole track."""
 
@@ -242,9 +247,15 @@ class Engine:
         config = diarization and _diarization_settings(so, diarization, thread_count)  # all files before the long load
         _open_item(lambda: so.VoiceActivityDetector(self.vad), model.title)  # a broken VAD fails now, not on audio
         open_view = getattr(so.OfflineRecognizer, kind.method)
-        self.recognizer = _open_item(
-            lambda: open_view(**files, **kind.other, num_threads=thread_count), model.title, model.custom
-        )
+        arguments = {**files, **kind.other, "num_threads": thread_count}
+        if _use_directml(model):
+            try:
+                self.recognizer = open_view(**arguments, provider="directml")
+            except (RuntimeError, MemoryError) as error:
+                log.warning("DirectML could not open %s; using CPU: %s", model.title, error)
+                self.recognizer = _open_item(lambda: open_view(**arguments, provider="cpu"), model.title, model.custom)
+        else:
+            self.recognizer = _open_item(lambda: open_view(**arguments), model.title, model.custom)
         self.diarizer = (
             _open_item(lambda: so.OfflineSpeakerDiarization(config), tr(DIARIZATION)) if diarization else None
         )
