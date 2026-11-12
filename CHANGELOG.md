@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.2 - 2026-11-13
+
+- Speed up opening the meeting list and task board, and load long transcripts and minutes progressively.
+- Allow entering a model ID directly in the minutes settings.
+- Keep unrelated keyboard shortcut warnings from appearing when the theme changes.
+- Add a CPU or GPU choice for local GigaAM recognition. In GPU mode, use Windows' high-performance adapter preference.
+
 ## 0.22.1 - 2026-11-12
 
 - Fix Windows startup when a conflicting ICU library was bundled with Qt.

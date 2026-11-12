@@ -45,6 +45,8 @@ class HotkeyRows:
         """A shortcut used by another of the three fields is refused: Windows would give it to one of them only."""
         config = self._editor.settings
         shortcut = edit.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+        if shortcut == getattr(config, field):
+            return
         taken = next((f for f in HOTKEYS if f != field and shortcut and getattr(config, f) == shortcut), None)
         if shortcut and system.windows_shortcut(shortcut) is None:
             failure = tr("Use Ctrl, Alt, Shift or Win with a key, or F1-F24")

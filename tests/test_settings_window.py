@@ -140,6 +140,14 @@ class TestSettingsFailures(TestSettingsWindow):
     """A refused write says so at its setting and keeps what was typed; shortcuts do not clash; icons follow the
     theme; the vocabulary keeps its words however its window closes."""
 
+    def test_leaving_an_unchanged_shortcut_does_not_apply_settings(self):
+        field = self.window.program.findChild(settings_hotkeys.QKeySequenceEdit)
+        result = self.window.program.hotkeys.result
+        previous_hint = result.text()
+        field.editingFinished.emit()
+        self.assertEqual(self.changes, [])
+        self.assertEqual(result.text(), previous_hint)
+
     def test_shortcut_used_by_another_action_is_refused(self):
         editor = next(
             e for e in self.window.findChildren(settings_hotkeys.QKeySequenceEdit) if e.keySequence().toString()

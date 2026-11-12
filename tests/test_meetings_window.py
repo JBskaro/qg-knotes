@@ -2,6 +2,8 @@
 """Meetings list: a click on a ready meeting opens it, the "Minutes" button, the minutes result in the row, no
 "Ready"."""
 
+import dataclasses
+import datetime
 import errno
 import pathlib
 import tempfile
@@ -78,6 +80,26 @@ class TestMeetingsList(unittest.TestCase):
         place = self.window.list_.visualItemRect(self._element(folder)).center()
         QTest.mouseClick(self.window.list_.viewport(), Qt.MouseButton.LeftButton, key_seq, place)
         app.processEvents()
+
+    def test_scrolling_to_an_unmounted_meeting_keeps_its_actions(self):
+        seed = catalog.meeting(self.ready_one)
+        meetings = []
+        for n in range(80):
+            folder = self.recordings / f"meeting-{n}"
+            folder.mkdir()
+            date = seed.date - datetime.timedelta(minutes=n)
+            meetings.append(dataclasses.replace(seed, folder=folder, started=date))
+        self.window.show_meetings(meetings, {}, {}, None)
+        app.processEvents()
+        list_ = self.window.list_
+        item = self._element(meetings[-1].folder)
+        self.assertIsNone(list_.itemWidget(item))
+        list_.scrollToBottom()
+        for _ in range(4):
+            app.processEvents()
+        self.assertIsNotNone(list_.itemWidget(item))
+        self._click(meetings[-1].folder)
+        self.assertEqual(self.opened_all, [meetings[-1].folder])
 
     def test_click_opens_meeting_next_to_list_without_sending(self):
         sent: list = []

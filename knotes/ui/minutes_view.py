@@ -7,12 +7,13 @@ Sections are shown as blocks with their own shade and a stripe on the left: deci
 
 import html
 import logging
+import math
 import pathlib
 import re
 from collections.abc import Callable
 
-from PySide6.QtCore import QFileSystemWatcher, QMimeData, QTimer, Qt, Signal
-from PySide6.QtGui import QGuiApplication, QTextDocument
+from PySide6.QtCore import QFileSystemWatcher, QMimeData, QSignalBlocker, QSizeF, QTimer, Qt, Signal
+from PySide6.QtGui import QGuiApplication, QTextDocument, QWheelEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -25,7 +26,9 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -39,6 +42,7 @@ EMPTY, RUNNING, VIEWING, EDIT = range(4)
 SAVE_MS = 700  # an edit of the minutes is saved this long after the last key, as in the notepad
 READING_WIDTH = 780  # lines not across the whole window: a long line is hard for the eye to follow
 CAPTION_WIDTH = 440  # captions under the "Write minutes" button
+LONG_SECTION = 32  # a single large rich-text label asks Qt to lay out the whole section at several widths
 SHADES = {
     "зеленый": "99,153,34",
     "синий": "55,138,221",
@@ -125,6 +129,31 @@ def read_problem(error: Exception) -> str:
     return failures.text(error)
 
 
+class SectionText(QTextBrowser):
+    """A rich-text document sized to its width inside the minutes' outer scroll area."""
+
+    def __init__(self, text: str, appearance: str):
+        super().__init__()
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet(f"QTextBrowser {{ background: transparent; border: none; padding: 0; {appearance} }}")
+        self.setOpenLinks(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.document().setDocumentMargin(0)
+        self.document().documentLayout().documentSizeChanged.connect(self._fit_height)
+        self.setHtml(text)
+        self._fit_height(self.document().size())
+
+    def _fit_height(self, size: QSizeF) -> None:
+        height = math.ceil(size.height())
+        if height != self.minimumHeight():
+            self.setFixedHeight(height)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()  # the outer minutes view scrolls the entire document
+
+
 class MinutesView(QWidget):
     """Signals: compose() to write the minutes or write them again; ask_assistant() to have them written by the
     user's own AI assistant; to_place(second) to show a place in the transcript."""
@@ -138,6 +167,7 @@ class MinutesView(QWidget):
         self.folder, self._source_fn = folder, source_of
         self._busy = False
         self._modified = False  # the edit differs from the file
+        self._rendered: tuple[str, bool, str] | None = None
         self.save_problem = ""  # why the last save failed
         self._save_later = QTimer(self, singleShot=True, interval=SAVE_MS)
         self._save_later.timeout.connect(self.save)
@@ -264,8 +294,8 @@ class MinutesView(QWidget):
 
     def repaint_theme(self) -> None:
         """Block and quiet text colors follow the theme: open minutes are laid out again."""
-        if self.pages.currentIndex() == VIEWING and (text := self._read()) is not None:
-            self._lay_out(text)
+        if self.pages.currentIndex() == VIEWING and self._rendered is not None:
+            self._lay_out(self._rendered[0])
 
     def _read(self) -> str | None:
         """The minutes file; None when there is none or it cannot be read (the reason is shown)."""
@@ -281,6 +311,9 @@ class MinutesView(QWidget):
     def _lay_out(self, text: str) -> None:
         """The start of the minutes as text, each section as its own block; a FOR_ANALYST section is set farther
         from the rest."""
+        rendered = (text, style.dark(), style.accent().name())
+        if self._rendered == rendered:
+            return
         style.empty(self._sheet_column)
         start, parts = minutes.sections(text)
         if start:
@@ -290,6 +323,7 @@ class MinutesView(QWidget):
                 self._sheet_column.addSpacing(14)
             self._sheet_column.addWidget(self._section(section))
         self._sheet_column.addStretch()
+        self._rendered = rendered
 
     def _caption(self, text: str) -> QLabel:
         """Item text: timestamps are links, the text can be selected with the mouse to copy a piece."""
@@ -322,12 +356,23 @@ class MinutesView(QWidget):
         column.setContentsMargins(14, 10, 12, 6)
         column.addLayout(header)
         if section.text:
-            text = self._caption("".join(_item_html(p) for p in minutes.items(section)))
-            text.setObjectName("текст_раздела")
-            if minutes.for_analyst(section.heading):
-                text.setStyleSheet(f"font-size: 13px; color: {secondary};")
-            column.addWidget(text)
+            column.addWidget(self._section_text(section, secondary))
         return block
+
+    def _section_text(self, section: minutes.Section, secondary: str) -> QWidget:
+        items = minutes.items(section)
+        text = "".join(_item_html(item) for item in items)
+        appearance = "font-size: 14px;"
+        if minutes.for_analyst(section.heading):
+            appearance = f"font-size: 13px; color: {secondary};"
+        if len(items) >= LONG_SECTION:
+            widget = SectionText(text, appearance)
+            widget.anchorClicked.connect(lambda url: self._by_link(url.toString()))
+        else:
+            widget = self._caption(text)
+            widget.setStyleSheet(appearance)
+        widget.setObjectName("текст_раздела")
+        return widget
 
     def _editing(self) -> QWidget:
         self.edit_item = QPlainTextEdit()
@@ -349,9 +394,6 @@ class MinutesView(QWidget):
             self.pages.setCurrentIndex(RUNNING)
         elif text is not None:
             self._lay_out(text)
-            self.edit_item.blockSignals(True)  # the file itself is not an edit to save
-            self.edit_item.setPlainText(text)
-            self.edit_item.blockSignals(False)
             self._modified = False
             self._save_later.stop()
             self.pages.setCurrentIndex(VIEWING)
@@ -421,6 +463,10 @@ class MinutesView(QWidget):
             if self.save():
                 self.display()
             return
+        if self.pages.currentIndex() != VIEWING or self._rendered is None:
+            return
+        with QSignalBlocker(self.edit_item):
+            self.edit_item.setPlainText(self._rendered[0])
         self.pages.setCurrentIndex(EDIT)
         self._change.setText(tr("Done"))
         self.edit_item.setFocus()

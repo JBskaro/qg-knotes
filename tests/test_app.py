@@ -227,6 +227,18 @@ class TestSettingsWindow(unittest.TestCase):
 
 
 class TestApplySettings(unittest.TestCase):
+    def test_changing_theme_does_not_retry_unavailable_shortcuts(self):
+        program = program_for(self)
+        program.key_seq = mock.Mock(**{"enable.return_value": False})
+        program.mark_hotkey = mock.Mock(**{"enable.return_value": False})
+        program.notes_hotkey = mock.Mock(**{"enable.return_value": False})
+        with mock.patch.object(program, "_apply_theme") as apply_theme:
+            program.apply_settings(dataclasses.replace(program.settings, theme="светлая"))
+        apply_theme.assert_called_once()
+        for shortcut in (program.key_seq, program.mark_hotkey, program.notes_hotkey):
+            shortcut.enable.assert_not_called()
+        program.notify.assert_not_called()
+
     def test_refused_shortcuts_and_unsaved_settings_are_reported(self):
         """The settings window shows what was typed; what Windows and the disk did not take is said by the app."""
         program = program_for(self)

@@ -70,7 +70,12 @@ class TasksWindow(QWidget):
     search_hint_changed = Signal(str)  # the board's own project button changed what it searches
 
     def __init__(
-        self, recordings: pathlib.Path, projects_: tuple[Sequence[str], dict[str, dict]], project: str | None = None
+        self,
+        recordings: pathlib.Path,
+        projects_: tuple[Sequence[str], dict[str, dict]],
+        project: str | None = None,
+        *,
+        meetings: list[catalog.Meeting] | None = None,
     ):
         super().__init__()
         self.recordings, self.project = recordings, project
@@ -115,7 +120,7 @@ class TasksWindow(QWidget):
         self._connect_signals()
         self._build()
         self.repaint_theme()
-        self._pick_project(project)
+        self._pick_project(project, meetings=meetings)
 
     def _connect_signals(self) -> None:
         self.panel.saved.connect(self._card_saved)
@@ -233,11 +238,11 @@ class TasksWindow(QWidget):
 
     # --- filters and display -------------------------------------------------------------------------------
 
-    def _pick_project(self, project: str | None) -> None:
+    def _pick_project(self, project: str | None, *, meetings: list[catalog.Meeting] | None = None) -> None:
         self.panel.close_view()
         if not self.panel.isHidden():  # the card was not saved: the panel stays until closed again
             return
-        self.project, self._meetings, self._shown = project, None, {}
+        self.project, self._meetings, self._shown = project, meetings, {}
         name = language.tr("All projects") if project is None else project or language.tr("No project")
         self._project_button.setText(style.menu_text(name))
         self._project_button.setMenu(
@@ -247,7 +252,7 @@ class TasksWindow(QWidget):
         self.window().setWindowTitle(f"{heading} - {style.NAME}")
         self.search_hint_changed.emit(self.search_hint)
         self._set_columns()
-        self.display()
+        self.display(reread=False)
 
     def _load(self, reread: bool) -> None:
         """The cards and labels; a folder that cannot be read (a network drive gone) gives an empty board and says

@@ -11,9 +11,10 @@ import logging
 import pathlib
 import re
 from collections.abc import Callable
+from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFocusEvent, QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QFocusEvent, QKeyEvent, QKeySequence, QMouseEvent, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -27,7 +28,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QToolButton,
@@ -40,6 +40,7 @@ from knotes.export import participant_caption
 from knotes.ui import export_dialog, style
 from knotes.ui.notepad import Notepad
 from knotes.ui.minutes_view import MinutesView
+from knotes.ui.transcript_scroll import TranscriptScroll
 from knotes.ui.video_view import VideoView
 from knotes.player import Player
 from knotes.language import tr
@@ -89,36 +90,36 @@ class PhraseEdit(QPlainTextEdit):
                 self.cancel.emit()
 
 
-class PhraseRow(QWidget):
-    """Time (click to play) and phrase text (double click to edit)."""
+class PhraseRow(QLabel):
+    """Selectable phrase text with a playback button in its left margin."""
 
     play = Signal(object)  # the row itself
     fixed = Signal(int, str)
     note = Signal(float)  # add a note to this phrase: its start
+    TIME_WIDTH = 76
 
     def __init__(self, number: int, start: float, text: str, has_audio: bool):
         super().__init__()
-        self.number, self.start, self.text = number, start, text
-        self.time = QToolButton()
+        self.number, self.start, self.phrase_text = number, start, text
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setContentsMargins(self.TIME_WIDTH, 1, 0, 1)
+        self.setToolTip(tr("Double-click to edit the text, right-click to add a note here"))
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
+        self.time = QToolButton(self)
         self.time.setObjectName("время_фразы")
         self.time.setAutoRaise(True)
+        self.time.setFixedWidth(self.TIME_WIDTH - 4)
         self.time.setToolTip(tr("Play from here") if has_audio else tr("Audio deleted, can't play"))
         self.time.setEnabled(has_audio)
         self.time.clicked.connect(lambda: self.play.emit(self))
-        self.caption = QLabel()
-        self.caption.setWordWrap(True)
-        self.caption.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.caption.setTextFormat(Qt.TextFormat.RichText)
-        self.caption.installEventFilter(self)
-        self.caption.setToolTip(tr("Double-click to edit the text, right-click to add a note here"))
-        self.caption.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.caption.customContextMenuRequested.connect(self._menu)
-        self._row = QHBoxLayout(self)
-        self._row.setContentsMargins(0, 1, 0, 1)
-        self._row.addWidget(self.time, 0, Qt.AlignmentFlag.AlignTop)
-        self._row.addWidget(self.caption, 1)
+        self.setMinimumHeight(self.time.sizeHint().height() + 2)
+        self._editor: PhraseEdit | None = None
         self.playing = False
-        self._plain = False  # the caption shows the text without highlights
+        self._plain = False  # the label shows the text without highlights
         self.show_time(False)
         self.light_up(None, -1)
 
@@ -134,52 +135,118 @@ class PhraseRow(QWidget):
         self.show_time(False)
         super().leaveEvent(event)
 
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self._editor is not None:
+            width = max(1, self.width() - self.TIME_WIDTH)
+            if self._editor.width() != width:
+                self._editor.setFixedWidth(width)
+                self._size_editor(self._editor)
+
+    def _size_editor(self, field: PhraseEdit) -> None:
+        field._by_text()
+        self.setMinimumHeight(max(self.time.sizeHint().height() + 2, field.height() + 2))
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and event.position().x() >= self.TIME_WIDTH:
+            self._edit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
     def light_up(self, query: re.Pattern | None, current_value: int) -> int:
-        """Matches get a pale highlight, the current one a brighter one; returns how many were found in the phrase.
-        A phrase without matches is redrawn only when it had highlights: a search goes through thousands of them."""
+        """Highlight matches; avoid redrawing phrases without matches."""
         pale, bright = style.HIGHLIGHT[style.dark()]
         marked, found = (
-            style.highlighted(self.text, query, lambda n: bright if n == current_value else pale) if query else ("", 0)
+            style.highlighted(self.phrase_text, query, lambda n: bright if n == current_value else pale)
+            if query
+            else ("", 0)
         )
         if not found:
             if not self._plain:
-                self.caption.setText(html.escape(self.text))
+                self.setText(html.escape(self.phrase_text))
                 self._plain = True
             return 0
         self._plain = False
-        self.caption.setText(marked)
+        self.setText(marked)
         return found
-
-    def eventFilter(self, subject: QObject, event: QEvent) -> bool:
-        if subject is self.caption and event.type() == QEvent.Type.MouseButtonDblClick:
-            self._edit()
-            return True
-        return False
 
     def _menu(self, point: QPoint) -> None:
         menu = QMenu(self)
         menu.addAction(tr("Add a note here…"), lambda: self.note.emit(self.start))
         menu.addAction(tr("Edit text"), self._edit)
-        menu.exec(self.caption.mapToGlobal(point))
+        menu.exec(self.mapToGlobal(point))
 
     def _edit(self) -> None:
-        field = PhraseEdit(self.text)
-        field.setFont(self.caption.font())
-        self.caption.hide()
-        self._row.addWidget(field, 1)
-        field.done.connect(lambda text: self._edit_result(field, text))
-        field.cancel.connect(lambda: self._edit_result(field, self.text))
+        if self._editor is not None:
+            return
+        rendered = self.text()
+        field = PhraseEdit(self.phrase_text)
+        field.setParent(self)
+        field.setFont(self.font())
+        field.document().documentLayout().documentSizeChanged.connect(lambda _: self._size_editor(field))
+        field.setFixedWidth(max(1, self.width() - self.TIME_WIDTH))
+        field.move(self.TIME_WIDTH, 1)
+        self._editor = field
+        self.setText("")
+        field.done.connect(lambda text: self._edit_result(field, text, rendered))
+        field.cancel.connect(lambda: self._edit_result(field, self.phrase_text, rendered))
+        field.show()
+        self._size_editor(field)
         field.setFocus()
         field.selectAll()
 
-    def _edit_result(self, field: PhraseEdit, text: str) -> None:
+    def _edit_result(self, field: PhraseEdit, text: str, rendered: str) -> None:
+        field.hide()
         field.deleteLater()
-        self.caption.show()
-        if text.strip() and text.strip() != self.text:
-            self.text = text.strip()
+        self._editor = None
+        self.setMinimumHeight(self.time.sizeHint().height() + 2)
+        self.setText(rendered)
+        if text.strip() and text.strip() != self.phrase_text:
+            self.phrase_text = text.strip()
             self._plain = False
             self.light_up(None, -1)
-            self.fixed.emit(self.number, self.text)
+            self.fixed.emit(self.number, self.phrase_text)
+
+
+PAGE_ROWS = 24
+
+
+def _transcript_pages(blocks: list[dict], only: str | None) -> list[list[dict]]:
+    """Split even a single long turn into small groups without repeating the speaker's name."""
+    pages: list[list[dict]] = []
+    remaining = 0
+    for block in blocks:
+        if only is not None and block.get("кто") != only:
+            continue
+        if "метка" in block:
+            if not remaining:
+                pages.append([])
+                remaining = PAGE_ROWS
+            pages[-1].append(block)
+            remaining -= 1
+            continue
+        phrases = block["фразы"]
+        start = 0
+        while start < len(phrases):
+            if not remaining:
+                pages.append([])
+                remaining = PAGE_ROWS
+            part = phrases[start : start + remaining]
+            pages[-1].append({"кто": block["кто"], "фразы": part, "continued": start > 0})
+            remaining -= len(part)
+            start += len(part)
+    return pages
+
+
+class TranscriptPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.column = QVBoxLayout(self)
+        self.column.setContentsMargins(0, 0, 0, 0)
+        self.rows: dict[int, PhraseRow] = {}
+        self.marks: dict[int, QWidget] = {}
+        self.chips: list[tuple[str, QLabel]] = []
 
 
 class MeetingView(QWidget):
@@ -207,16 +274,21 @@ class MeetingView(QWidget):
         to the closest one."""
         super().__init__()
         self.folder, self.in_notepad, self._minutes_source = folder, in_notepad, minutes_source
-        self._rows: list[PhraseRow] = []
-        self._labels: list[tuple[float, str, QWidget]] = []  # time, label text, its row
-        self._blocks: list[tuple[str, QWidget]] = []
-        self._chips: list[tuple[str, QLabel]] = []  # who and the name over their block
+        self._transcript_blocks: list[dict] = []
+        self._phrase_data: dict[int, tuple[float, str]] = {}
+        self._page_data: list[list[dict]] = []
+        self._phrase_pages: dict[int, int] = {}
+        self._mark_pages: dict[int, int] = {}
+        self._speaker_names: dict[str, str] = {}
+        self._audio_available = False
+        self._pattern: re.Pattern | None = None
+        self._match_offsets: dict[int, int] = {}
         self._participants: list[str] = []
         self._built: tuple | None = None  # versions of the files the shown transcript was built from
         self._only: str | None = None
         self._current, self._found = 0, 0
         self._size_of = QApplication.font().pointSize()  # phrase size in points, changed by A− and A+
-        self._playing: PhraseRow | None = None
+        self._playing: int | None = None
         self.player = Player()
         self._played_out.connect(self._playback_end)
         self._build(projects or [], tab)
@@ -231,13 +303,8 @@ class MeetingView(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(6, 4, 4, 4)
         column.addLayout(self._header(projects))
-        self.text = QWidget()
-        self._text_column = QVBoxLayout(self.text)
-        self._text_column.setContentsMargins(4, 4, 12, 4)
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setWidget(self.text)
+        self.scroll_area = TranscriptScroll(self._create_page, self._keep_page)
+        self.text = self.scroll_area.canvas
         self._text_field = self.scroll_area.viewport()  # for eventFilter: on close the scroll area may be deleted
         self._text_field.installEventFilter(self)
         self.panel = QWidget()
@@ -425,23 +492,62 @@ class MeetingView(QWidget):
         sources = self._sources()
         if sources == self._built:
             return
-        scroll_area = self.scroll_area.verticalScrollBar().value()
+        self._finish_phrase_edit()
+        position = self.scroll_area.verticalScrollBar().value()
         self.player.stop()
         self._playing = None
-        style.empty(self._text_column)
-        self._rows, self._labels, self._blocks, self._chips = [], [], [], []
         self._participants = transcript.participants(self.folder)
-        names, has_audio = transcript.names(self.folder), sources[-1]
-        for block in transcript.blocks(self.folder, notes.with_minutes(self.folder)):
-            self._add_block(block, names, has_audio)
-        if not self._blocks and not self._labels:
-            self._text_column.addWidget(QLabel(tr("The meeting isn't transcribed yet")))
-        self._text_column.addStretch()
-        self._participants_panel(names)
-        self._apply_filter()
-        self._light_up(self._current)
-        self.scroll_area.verticalScrollBar().setValue(scroll_area)
+        self._speaker_names, self._audio_available = transcript.names(self.folder), sources[-1]
+        self._transcript_blocks = transcript.blocks(self.folder, notes.with_minutes(self.folder))
+        self._phrase_data = {
+            number: (start, text) for block in self._transcript_blocks for number, start, text in block.get("фразы", ())
+        }
+        self._load_pages(position)
+        self._participants_panel(self._speaker_names)
         self._built = sources
+
+    @property
+    def _rows(self) -> list[PhraseRow]:
+        return [row for page in self._mounted_pages() for row in page.rows.values()]
+
+    def _mounted_pages(self) -> list[TranscriptPage]:
+        mounted = self.scroll_area.mounted
+        return [cast(TranscriptPage, mounted[index]) for index in sorted(mounted)]
+
+    def _load_pages(self, position: int) -> None:
+        self._page_data = _transcript_pages(self._transcript_blocks, self._only) or [[]]
+        self._phrase_pages.clear()
+        self._mark_pages.clear()
+        estimates = []
+        for index, blocks in enumerate(self._page_data):
+            height = 24 if not blocks else 0
+            for block in blocks:
+                if "метка" in block:
+                    self._mark_pages[id(block)] = index
+                    height += 34
+                else:
+                    phrases = block["фразы"]
+                    self._phrase_pages.update((number, index) for number, _, _ in phrases)
+                    height += 25 * len(phrases) + (0 if block["continued"] else 34)
+            estimates.append(height)
+        self.scroll_area.set_pages(estimates, position)
+        self._light_up(self._current, jump=False)
+
+    def _create_page(self, index: int) -> QWidget:
+        page = TranscriptPage()
+        blocks = self._page_data[index]
+        for block in blocks:
+            if "метка" in block:
+                self._add_label(page, block)
+            else:
+                self._add_block(page, block)
+        if not blocks:
+            page.column.addWidget(QLabel(tr("The meeting isn't transcribed yet")))
+        return page
+
+    def _keep_page(self, widget: QWidget) -> bool:
+        focus = QApplication.focusWidget()
+        return bool((focus and widget.isAncestorOf(focus)) or (self._playing and widget.isAncestorOf(self._playing)))
 
     def _summary(self) -> str:
         """When and how long it lasted; service, models and costs are in the summary, by meeting."""
@@ -451,33 +557,32 @@ class MeetingView(QWidget):
             parts.append(catalog.duration(data["сведения"]["длительность"]))
         return " · ".join(parts)
 
-    def _add_block(self, block: dict, names: dict[str, str], has_audio: bool) -> None:
-        if "метка" in block:
-            self._add_label(block)
-            return
+    def _add_block(self, page: TranscriptPage, block: dict) -> None:
         widget = QWidget()
         column = QVBoxLayout(widget)
-        column.setContentsMargins(0, 6, 0, 6)
+        column.setContentsMargins(0, 0 if block["continued"] else 6, 0, 6)
         column.setSpacing(1)
         who, participants = block["кто"], self._participants
-        name = style.caption(names.get(who) or participant_caption(who))
-        name.setStyleSheet(style.participant_chip(participants.index(who) if who in participants else 0))
-        self._chips.append((who, name))
-        header = QHBoxLayout()
-        header.addWidget(name)
-        header.addStretch()
-        column.addLayout(header)
-        for number, start, text in block["фразы"]:
-            row = PhraseRow(number, start, text, has_audio)
+        if not block["continued"]:
+            name = style.caption(self._speaker_names.get(who) or participant_caption(who))
+            name.setStyleSheet(style.participant_chip(participants.index(who) if who in participants else 0))
+            page.chips.append((who, name))
+            column.addWidget(name, alignment=Qt.AlignmentFlag.AlignLeft)
+        for number, _, _ in block["фразы"]:
+            start, text = self._phrase_data[number]
+            row = PhraseRow(number, start, text, self._audio_available)
             row.play.connect(self._play)
             row.fixed.connect(self._fix)
             row.note.connect(self._note_at)
-            self._rows.append(row)
+            page.rows[number] = row
+            if number == self._playing:
+                row.playing = True
+                row.show_time(True)
+            self._highlight_row(row)
             column.addWidget(row)
-        self._blocks.append((block["кто"], widget))
-        self._text_column.addWidget(widget)
+        page.column.addWidget(widget)
 
-    def _add_label(self, block: dict) -> None:
+    def _add_label(self, page: TranscriptPage, block: dict) -> None:
         """A ★ mark or a ✎ note among the phrases; right-click to delete."""
         note = block["метка"].startswith(transcript.NOTE)
         label = QFrame()
@@ -506,8 +611,8 @@ class MeetingView(QWidget):
         row_label.setWordWrap(True)
         row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         row.addWidget(row_label, 1)
-        self._labels.append((block["время"], block["метка"], label))
-        self._text_column.addWidget(label)
+        page.marks[id(block)] = label
+        page.column.addWidget(label)
 
     def _label_menu(self, block: dict, where: QPoint) -> None:
         menu = QMenu(self)
@@ -543,10 +648,11 @@ class MeetingView(QWidget):
         shares = transcript.shares(self.folder)
         for number, who in enumerate(self._participants):
             self._panel_column.addWidget(self._participant(number, who, names.get(who, ""), shares.get(who, 0.0)))
-        if self._labels:
+        marks = [block for block in self._transcript_blocks if "метка" in block]
+        if marks:
             self._panel_column.addWidget(self._panel_title(tr("Marks and notes")))
-            for seconds, text, widget in self._labels:
-                self._panel_column.addWidget(self._label_link(seconds, text, widget))
+            for block in marks:
+                self._panel_column.addWidget(self._label_link(block))
         self._panel_column.addStretch()
 
     @staticmethod
@@ -593,14 +699,15 @@ class MeetingView(QWidget):
         column.addWidget(bar)
         return widget
 
-    def _label_link(self, seconds: float, text: str, widget: QWidget) -> QPushButton:
+    def _label_link(self, block: dict) -> QPushButton:
+        seconds, text = block["время"], block["метка"]
         note = text.startswith(transcript.NOTE)
         row_label = text.removeprefix(transcript.NOTE).strip()[:24].replace("&", "&&") if note else ""  # not a mnemonic
         button = QPushButton(f"{style.NOTE if note else style.STAR}  {transcript.time(seconds)}  {row_label}")
         button.setFlat(True)
         button.setToolTip(style.plain_tooltip(text) if note else tr("Go to the mark set during recording"))
         button.setStyleSheet('font-family: "Segoe UI Variable Text", "Segoe Fluent Icons"; text-align: left;')
-        button.clicked.connect(lambda: self._to_row(widget))
+        button.clicked.connect(lambda: self._to_mark(id(block)))
         return button
 
     # --- actions --------------------------------------------------------------------------------------------
@@ -625,37 +732,47 @@ class MeetingView(QWidget):
         if names.get(who, "") == name.strip():
             return
         transcript.set_names(self.folder, {who: name})  # only this one: another may have changed meanwhile
-        for chip_of, chip in self._chips:
-            if chip_of == who:
-                chip.setText(name.strip() or participant_caption(who))
+        self._speaker_names = {**names, who: name.strip()}
+        for page in self._mounted_pages():
+            for chip_of, chip in page.chips:
+                if chip_of == who:
+                    chip.setText(name.strip() or participant_caption(who))
         self._built = self._sources()
 
     def _fix(self, number: int, text: str) -> None:
         transcript.fix_phrase(self.folder, number, text)
+        start, _ = self._phrase_data[number]
+        self._phrase_data[number] = start, text
         self._built = self._sources()  # the row shows the new text already
-        self._light_up(self._current)
+        self._light_up(self._current, jump=False)
 
     def _filter_fn(self, who: str | None) -> None:
+        self._finish_phrase_edit()
         self._only = who
-        self._participants_panel(transcript.names(self.folder))
-        self._apply_filter()
+        self._participants_panel(self._speaker_names)
+        self._load_pages(0)
 
-    def _apply_filter(self) -> None:
-        for who, widget in self._blocks:
-            widget.setVisible(self._only is None or who == self._only)
-        for *_, widget in self._labels:
-            widget.setVisible(self._only is None)
+    def _finish_phrase_edit(self) -> None:
+        focus = QApplication.focusWidget()
+        if focus and self.text.isAncestorOf(focus):
+            self.scroll_area.setFocus()
+
+    def _stop_phrase_icon(self, number: int | None) -> None:
+        index = self._phrase_pages.get(number) if number is not None else None
+        if index is not None and index in self.scroll_area.mounted:
+            page = cast(TranscriptPage, self.scroll_area.mounted[index])
+            row = page.rows[number]
+            row.playing = False
+            row.show_time(False)
 
     def _play(self, row: PhraseRow) -> None:
         old, self._playing = self._playing, None
         self.player.stop()
         self.video.stop()
-        if old:
-            old.playing = False
-            old.show_time(False)
-        if old is row:
+        self._stop_phrase_icon(old)
+        if old == row.number:
             return
-        self._playing, row.playing = row, True
+        self._playing, row.playing = row.number, True
         row.show_time(True)
         self.player.play(self.folder, row.start, self._played_out.emit)
         self.video.play(row.start, player.LENGTH_S)  # frames play along with the phrase sound
@@ -664,10 +781,8 @@ class MeetingView(QWidget):
         self.video.stop()
         self.problem.setText(error)
         self.problem.setVisible(bool(error))
-        if self._playing:
-            self._playing.playing = False
-            self._playing.show_time(False)
-            self._playing = None
+        self._stop_phrase_icon(self._playing)
+        self._playing = None
 
     # --- search and font ------------------------------------------------------------------------------------
 
@@ -679,25 +794,34 @@ class MeetingView(QWidget):
         else:
             self._step(1)
 
-    def _light_up(self, current_value: int) -> None:
+    def _highlight_row(self, row: PhraseRow) -> None:
+        offset = self._match_offsets.get(row.number)
+        row.light_up(self._pattern if offset is not None else None, self._current - (offset or 0))
+
+    def _light_up(self, current_value: int, jump: bool = True) -> None:
         query = self.search.text().strip()
-        pattern = meeting_list.search_pattern(query) if query else None
-        total, current_row = 0, None
+        self._pattern = meeting_list.search_pattern(query) if query else None
+        self._match_offsets = {}
+        total = 0
+        if self._pattern:
+            for number in self._phrase_pages:
+                found = sum(1 for _ in self._pattern.finditer(self._phrase_data[number][1]))
+                if found:
+                    self._match_offsets[number] = total
+                    total += found
+        self._found, self._current = total, min(current_value, max(0, total - 1))
         for row in self._rows:
-            found = row.light_up(pattern, current_value - total)
-            if current_row is None and total + found > current_value:
-                current_row = row
-            total += found
-        self._found, self._current = total, current_value
+            self._highlight_row(row)
         self.found.setText(
-            tr("{number} of {total}", number=current_value + 1, total=total)
+            tr("{number} of {total}", number=self._current + 1, total=total)
             if total
             else (tr("not found") if query else "")
         )
         for arrow in self._arrows:
             arrow.setVisible(bool(query))
-        if current_row is not None and query:
-            self._to_row(current_row)
+        if jump and total:
+            number = next(n for n, offset in reversed(self._match_offsets.items()) if offset <= self._current)
+            self._to_phrase(number)
 
     def _step(self, on_: int) -> None:
         if self._found:
@@ -762,10 +886,20 @@ class MeetingView(QWidget):
         self.show_tab(TRANSCRIPT)
         self.search.setFocus()
 
-    def _to_row(self, widget: QWidget) -> None:
-        """Scroll to a phrase or mark vertically only: a sideways shift in a narrow panel hides the line starts."""
-        self.scroll_area.ensureVisible(0, widget.mapTo(self.text, widget.rect().topLeft()).y(), 0, 140)
-        self.scroll_area.horizontalScrollBar().setValue(0)
+    def _to_phrase(self, number: int) -> PhraseRow:
+        index = self._phrase_pages[number]
+        page = cast(TranscriptPage, self.scroll_area.page(index))
+        row = page.rows[number]
+        self.scroll_area.reveal(index, row)
+        return row
+
+    def _to_mark(self, mark: int) -> None:
+        if self._only is not None:
+            self._filter_fn(None)
+        if mark in self._mark_pages:
+            index = self._mark_pages[mark]
+            page = cast(TranscriptPage, self.scroll_area.page(index))
+            self.scroll_area.reveal(index, page.marks[mark])
 
     def show_participants(self, on: bool) -> None:
         """Participants panel (names, speech shares, marks) by a button: when open, it squeezes the transcript text."""
@@ -781,12 +915,12 @@ class MeetingView(QWidget):
         self.show_tab(TRANSCRIPT)
         if self._only is not None:
             self._filter_fn(None)
-        row = next((r for r in self._rows if int(r.start) >= seconds), self._rows[-1] if self._rows else None)
-        if row is None:
+        if not self._phrase_data:
             return
+        last = next(reversed(self._phrase_data))
+        number = next((n for n, (start, _) in self._phrase_data.items() if int(start) >= seconds), last)
+        row = self._to_phrase(number)
         self.video.show_frame(row.start)
-        # tied to the row: a meeting closed meanwhile takes the delayed calls with it
-        QTimer.singleShot(60, row, lambda: self._to_row(row))  # the tab has just opened: let the text lay out first
         row.setStyleSheet(f"background: {style.HIGHLIGHT[style.dark()][0]}; border-radius: 4px;")
         QTimer.singleShot(HIGHLIGHT_MS, row, lambda: row.setStyleSheet(""))
 

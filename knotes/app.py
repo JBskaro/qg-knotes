@@ -801,13 +801,15 @@ class App(QObject):
         """The task board and project notes in the meetings window instead of the list."""
         from knotes.ui.tasks_window import TasksWindow  # noqa: PLC0415 - loaded when first opened
 
+        meetings = catalog.list_(self.settings.recordings)
         page = TasksWindow(
             self.settings.recordings,
             (
-                self._projects(),
+                catalog.projects(meetings, self.settings.projects),
                 self.settings.project_looks,
             ),
             project,
+            meetings=meetings,
         )
         page.open_place.connect(self.open_place)
         self.window.show_page(page, tr("Tasks"), "задачи")
@@ -824,7 +826,7 @@ class App(QObject):
         return lambda sent: self.apply_settings(edits.apply(self.settings, sent))
 
     def apply_settings(self, new_items: settings.Settings) -> None:
-        folder_changed = new_items.recordings_folder != self.settings.recordings_folder
+        previous = self.settings
         self.settings = new_items
         try:
             settings.save(new_items)
@@ -832,17 +834,20 @@ class App(QObject):
             log.warning("settings not saved: %s", error)
             self.notify(tr("Settings not saved"), failures.text(error))
         self.detector.apps = new_items.meeting_apps
-        self._enable_other_hotkeys(new_items)
-        if not self.key_seq.enable(new_items.hotkey):
+        self._enable_other_hotkeys(new_items, previous)
+        if new_items.hotkey != previous.hotkey and not self.key_seq.enable(new_items.hotkey):
             self._shortcut_taken(new_items.hotkey)
         self._apply_theme()
         self.session.hide_from_capture(new_items.hide_bar)
-        if folder_changed:
+        if new_items.recordings_folder != previous.recordings_folder:
             self._refresh_window()
 
-    def _enable_other_hotkeys(self, config: settings.Settings) -> None:
-        """The mark and notepad shortcuts; one Windows does not grant is reported like the recording one."""
-        for hotkey, shortcut in ((self.mark_hotkey, config.mark_hotkey), (self.notes_hotkey, config.notes_hotkey)):
+    def _enable_other_hotkeys(self, config: settings.Settings, previous: settings.Settings | None = None) -> None:
+        """Register mark and notepad shortcuts on startup or when their values change."""
+        for field, hotkey in (("mark_hotkey", self.mark_hotkey), ("notes_hotkey", self.notes_hotkey)):
+            shortcut = getattr(config, field)
+            if previous is not None and shortcut == getattr(previous, field):
+                continue
             if not hotkey.enable(shortcut):
                 self._shortcut_taken(shortcut)
 

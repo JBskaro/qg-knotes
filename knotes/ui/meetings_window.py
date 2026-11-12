@@ -48,7 +48,7 @@ from knotes.meeting_rows import MeetingItem, Progress
 from knotes.ui import tour
 from knotes.ui import style
 from knotes.ui.meeting_row import MeetingRow
-from knotes.ui.meetings_list import MeetingsList
+from knotes.ui.meetings_list import DAY_ROLE, MeetingsList
 from knotes.ui.project_page import ProjectPage
 from knotes.ui.projects_panel import ProjectsPanel, looks_menu, minutes_menu
 from knotes.ui.sidebar import STRIP_WIDTH, SidebarPanel
@@ -108,7 +108,7 @@ class MeetingsWindow(QWidget):
         self._search_delay.timeout.connect(lambda: self._show_items(always=True))
         self.search.textChanged.connect(self._search_changed)
         self._meetings_query = ""  # kept while a section with its own search (the help) has the search box
-        self.list_ = MeetingsList()
+        self.list_ = MeetingsList(self._row_widget)
         self.list_.setObjectName("встречи")
         self.list_.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.list_.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -481,6 +481,8 @@ class MeetingsWindow(QWidget):
             kind = element.data(Qt.ItemDataRole.UserRole)
             if kind and kind.meeting.folder == folder:
                 self._row(element, dataclasses.replace(kind, progress=progress))
+                self.list_.refresh_widgets()
+                break
 
     def set_tasks(self, open_items: int) -> None:
         """How many open tasks are on the board: the number by the "Tasks" section."""
@@ -709,16 +711,7 @@ class MeetingsWindow(QWidget):
         self._snapshot = ()  # remembered once the list is built: a rebuild cut off by an error is done again
         selected_set = {v.meeting.folder for v in self._selected_items()}
         scroll_area = self.list_.verticalScrollBar().value()
-        self.list_.clear()
-        group = None
-        for kind in kinds:
-            day = tr(catalog.day(kind.meeting.date.date()))
-            if day != group:
-                group = day
-                self._add_group(day)
-            self._add(kind, kind.meeting.folder in selected_set)
-        self.list_.verticalScrollBar().setValue(scroll_area)
-        self._snapshot = snapshot
+        self._rebuild_items(kinds, selected_set, scroll_area)
         if self.recordings_folder is not None and not self.recordings_folder.exists():
             self.empty.setText(
                 tr(
@@ -739,14 +732,30 @@ class MeetingsWindow(QWidget):
             )
         self.list_.setVisible(bool(kinds))
         self.empty.setVisible(not kinds)
+        self.list_.refresh_widgets()
+        self._snapshot = snapshot
+
+    def _rebuild_items(self, kinds: list[MeetingItem], selected: set[pathlib.Path], scroll: int) -> None:
+        self.list_.setUpdatesEnabled(False)
+        try:
+            self.list_.clear()
+            group = None
+            for kind in kinds:
+                day = tr(catalog.day(kind.meeting.date.date()))
+                if day != group:
+                    group = day
+                    self._add_group(day)
+                self._add(kind, kind.meeting.folder in selected)
+            self.list_.doItemsLayout()
+            self.list_.verticalScrollBar().setValue(scroll)
+        finally:
+            self.list_.setUpdatesEnabled(True)
 
     def _add_group(self, day: str) -> None:
         element = QListWidgetItem(self.list_)
         element.setFlags(Qt.ItemFlag.NoItemFlags)
-        label = QLabel(day)
-        label.setObjectName("группа")
+        element.setData(DAY_ROLE, day)
         element.setSizeHint(QSize(0, 34))
-        self.list_.setItemWidget(element, label)
 
     def _add(self, kind: MeetingItem, selected: bool) -> None:
         element = QListWidgetItem(self.list_)
@@ -754,12 +763,16 @@ class MeetingsWindow(QWidget):
         element.setSelected(selected)
 
     def _row(self, element: QListWidgetItem, kind: MeetingItem) -> None:
+        self.list_.forget_widget(element)
         element.setData(Qt.ItemDataRole.UserRole, kind)
+        element.setSizeHint(QSize(0, 76 if kind.result or kind.progress else 58))
+
+    def _row_widget(self, element: QListWidgetItem) -> MeetingRow:
+        kind = element.data(Qt.ItemDataRole.UserRole)
         line = MeetingRow(kind, self._project_looks.get(kind.meeting.project, {}).get("цвет"))
         line.action.connect(lambda: self._main_point(kind))
         line.menu.connect(lambda point: self._row_menu(element, point))
-        element.setSizeHint(QSize(0, line.sizeHint().height()))  # width follows the column, texts get shortened
-        self.list_.setItemWidget(element, line)
+        return line
 
     def _selected_items(self) -> list[MeetingItem]:
         return [

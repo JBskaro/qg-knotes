@@ -175,6 +175,12 @@ class ConnectionBlock(QObject):
         """Rows into the section form: preset, address, API key (with the check result) and model."""
         hints = HINTS[self.function]
         self._form = form_layout
+        model_row = form.row(self.model, self._refresh, self._saved["модель"], stretch=True)
+        if self.function == "протоколы":
+            manual = QLabel(tr("Choose a model from the list or paste its ID from the provider and press Enter."))
+            manual.setObjectName("тихий_текст")
+            manual.setWordWrap(True)
+            model_row = form.column(model_row, manual)
         self._network_rows = [
             form.column(form.row(self.address, self._saved["адрес"], stretch=True), self._plain_http_warning),
             form.column(
@@ -182,7 +188,7 @@ class ConnectionBlock(QObject):
                 self.secret.result,
                 self.shared_label,
             ),
-            form.row(self.model, self._refresh, self._saved["модель"], stretch=True),
+            model_row,
         ]
         form_layout.addRow(form.row_label(tr("Preset"), tr(hints["заготовка"])), form.row(self.preset))
         for row_label, hint, line in zip(
@@ -221,7 +227,7 @@ class ConnectionBlock(QObject):
         self._show_rows()
         if self.local_engine:
             return
-        self._show_models(list(pr.models) or ([(pr.model, pr.model)] if pr.model else []))
+        self._show_models(list(pr.models) or ([(pr.model, pr.model)] if pr.model else []), keep_draft=False)
         if pr.models_endpoint and pr.address:
             self._load_models()
 
@@ -324,17 +330,28 @@ class ConnectionBlock(QObject):
         self._refresh.setEnabled(False)
         self._ask(lambda: providers.models(pr, key), self._show_models)
 
-    def _show_models(self, list_: object) -> None:
+    def _show_models(self, list_: object, *, keep_draft: bool = True) -> None:
         self._refresh.setEnabled(True)
         if isinstance(list_, Exception):
             self.secret.report(_list_failure(list_), "ошибка_текст")
             return
+        field = self.model.lineEdit()
+        draft = field.text() if keep_draft and field.isModified() else None
+        cursor = field.cursorPosition()
+        selection, length = field.selectionStart(), len(field.selectedText())
         current_one = self._model or self._preset().model
         self.model.clear()
         for id_, title in list_:  # type: ignore[attr-defined]
             self.model.addItem(id_ if title == id_ else f"{title}{SEPARATOR}{id_}", id_)
         self._pick_model(current_one)
-        self.model.lineEdit().setPlaceholderText(
+        if draft is not None:
+            self.model.setEditText(draft)
+            if selection >= 0:
+                field.setSelection(selection, length)
+            else:
+                field.setCursorPosition(cursor)
+            field.setModified(True)
+        field.setPlaceholderText(
             tr("Choose a model from the list") if self.model.count() else tr("Model name on the server")
         )
 
@@ -355,6 +372,7 @@ class ConnectionBlock(QObject):
                 self.edited.emit({"local_model": custom})
             return
         self._pick_model(model)
+        self.model.lineEdit().setModified(False)
         if custom != self._model:
             self._model = custom
             self._change(model=custom)

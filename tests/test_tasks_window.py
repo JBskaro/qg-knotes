@@ -2,6 +2,7 @@
 """The "Tasks" page: columns by status and project columns, moving and reordering by dragging, filters, the card
 panel with editing and autosave, quick add, the card menu, keys, archive, failed writes, plain text in messages."""
 
+import dataclasses
 import datetime
 import errno
 import pathlib
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QToolBu
 
 from knotes import tasks, catalog, minutes, projects, transcript
 from knotes.ui import board_panel, style, tasks_window
+from knotes.ui.board_card import CardLook
 from knotes.ui.board_columns import TASK_MIME
 from knotes.ui.board_style import OPENED
 from knotes.ui.tasks_window import TasksWindow
@@ -79,6 +81,23 @@ class BoardCase(unittest.TestCase):
 
 
 class TestTasksWindow(BoardCase):
+    def test_scrolling_to_an_unmounted_card_keeps_it_selectable(self):
+        col = self.window.columns[tasks.TODO]
+        source = self.window._cards[0]
+        cards = [dataclasses.replace(source, key=f"test-{n}", text=f"Задача {n}") for n in range(80)]
+        col.set_(cards, CardLook(datetime.date.today(), {}))
+        last = col.item(len(cards) - 1)
+        self.assertIsNone(col.itemWidget(last))
+        col.scrollToBottom()
+        for _ in range(4):
+            app.processEvents()
+        self.assertEqual(col.itemWidget(last).title.text(), cards[-1].text)
+        picked = []
+        col.open_card.connect(picked.append)
+        col.setCurrentItem(last)
+        QTest.keyClick(col, Qt.Key.Key_Return)
+        self.assertEqual(picked, [cards[-1]])
+
     def test_columns_overdue_on_top_and_source(self):
         self.assertEqual(
             self._texts(tasks.TODO), ["Доделать загрузку.", "Проверить коэффициент.", "Как пересчитывать коробки."]

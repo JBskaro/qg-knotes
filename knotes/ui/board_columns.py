@@ -5,7 +5,7 @@ edits in place on a project board."""
 
 import dataclasses
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (
@@ -19,7 +19,6 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPixmap,
-    QResizeEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -27,7 +26,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QListWidgetItem,
     QWidget,
 )
@@ -37,6 +35,7 @@ from knotes.ui import style
 from knotes.ui.board_card import CardLook, TaskCard
 from knotes.ui.board_icons import state_sign, tone
 from knotes.ui.board_style import CHOSEN, OPENED
+from knotes.ui.viewport_list import ViewportList
 
 TASK_MIME = "application/x-qg-knotes-task"  # a dragged task: its key
 ROLE = Qt.ItemDataRole.UserRole
@@ -48,7 +47,7 @@ def _looks(task: tasks.Task) -> tasks.Task:
     return dataclasses.replace(task, order=None, column="")
 
 
-class TaskColumn(QListWidget):
+class TaskColumn(ViewportList):
     """A board column: a card is dragged here from another column or to another place in this one; click and Enter
     open the card, Delete archives it."""
 
@@ -79,7 +78,6 @@ class TaskColumn(QListWidget):
         self._capture = QPoint(12, 12)  # where the mouse grabbed the card
         self._opened = ""  # key of the card open in the panel
         self._look: CardLook | None = None  # what the card widgets were made with
-        self._filling = False
         self._found: re.Pattern | None = None  # what the board search lights up
 
     def set_(
@@ -95,17 +93,16 @@ class TaskColumn(QListWidget):
         common = dataclasses.replace(look, opened="")  # the open card is marked by mark(), not made again
         self.setUpdatesEnabled(False)
         self.blockSignals(True)
-        self._filling = True
         if common != self._look:
             self._look = common
             self.clear()
         self._sync(list_)
         shown = self._show(visible, limit)
         self.setCurrentItem(next((e for e in self._shown() if e.data(ROLE).key == chosen), None))
-        self._filling = False
         self.blockSignals(False)
-        self._fit()
+        self.doItemsLayout()
         self.verticalScrollBar().setValue(scrolled)
+        self.refresh_widgets()
         self.setUpdatesEnabled(True)
         self.mark()
         return shown
@@ -118,15 +115,20 @@ class TaskColumn(QListWidget):
         kept = tasks.kept(rows, [z.key for z in list_])
         for number in reversed(range(self.count())):
             if rows[number] not in wanted or rows[number] not in kept:
+                self.forget_widget(self.item(number))
                 self.takeItem(number)
         for number, task in enumerate(list_):
             if task.key not in kept:
                 self.insertItem(number, QListWidgetItem())
             element = self.item(number)
             before = element.data(ROLE)
+            if before == task:
+                continue
             element.setData(ROLE, task)
-            if before is not None and _looks(before) != _looks(task):
-                self.removeItemWidget(element)
+            if before is None:
+                element.setSizeHint(QSize(0, 84))  # measured when the card comes into view
+            elif _looks(before) != _looks(task):
+                self.forget_widget(element)
 
     def _show(self, visible: set[str] | None, limit: int | None) -> int:
         shown = 0
@@ -134,30 +136,28 @@ class TaskColumn(QListWidget):
             element = self.item(number)
             task = element.data(ROLE)
             show = (visible is None or task.key in visible) and (limit is None or shown < limit)
-            element.setHidden(not show)
+            if element.isHidden() == show:
+                element.setHidden(not show)
             if show:
                 shown += 1
-                if self.itemWidget(element) is None:
-                    self._card(element, task, self._look)
         return shown
 
     def _shown(self) -> list[QListWidgetItem]:
         return [e for e in (self.item(n) for n in range(self.count())) if not e.isHidden()]
 
-    def _card(self, element: QListWidgetItem, task: tasks.Task, look: CardLook) -> None:
-        element.setData(ROLE, task)
-        widget = TaskCard(task, look)
+    def _make_widget(self, item: QListWidgetItem) -> QWidget:
+        widget = TaskCard(item.data(ROLE), self._look)
         widget.open_place.connect(self.open_place)
         if self._found is not None:
             widget.light_up(self._found)
-        self.setItemWidget(element, widget)
+        self._mark_item(item, widget)
+        return widget
 
     def light_up(self, found: re.Pattern | None) -> None:
         """The search words in the shown cards; a card made later gets them when it is made."""
         self._found = found
-        for element in self._shown():
-            if (widget := self.itemWidget(element)) is not None:
-                widget.light_up(found)
+        for element in self.mounted_items():
+            self.itemWidget(element).light_up(found)
 
     def keys(self) -> list[str]:
         """Keys of the shown cards, top to bottom."""
@@ -167,29 +167,25 @@ class TaskColumn(QListWidget):
         """An accent color border on the card open in the panel and on the one chosen with the keys."""
         if opened is not None:
             self._opened = opened
-        for element in self._shown():
-            widget = self.itemWidget(element)
-            opened_ = element.data(ROLE).key == self._opened
-            chosen = element is self.currentItem() and self.hasFocus()
-            if (widget.property(OPENED), widget.property(CHOSEN)) != (opened_, chosen):
-                widget.setProperty(OPENED, opened_)
-                widget.setProperty(CHOSEN, chosen)
-                style.restyle(widget)
+        for element in self.mounted_items():
+            self._mark_item(element, self.itemWidget(element))
 
-    def _fit(self, elements: Sequence[QListWidgetItem] | None = None) -> None:
+    def _mark_item(self, item: QListWidgetItem, widget: QWidget) -> None:
+        opened = item.data(ROLE).key == self._opened
+        chosen = item is self.currentItem() and self.hasFocus()
+        if (widget.property(OPENED), widget.property(CHOSEN)) != (opened, chosen):
+            widget.setProperty(OPENED, opened)
+            widget.setProperty(CHOSEN, chosen)
+            style.restyle(widget)
+
+    def _fit_widget(self, item: QListWidgetItem, widget: QWidget) -> None:
         """Cards take the column width, the height follows the text wrapping."""
         width = max(120, self.viewport().width() - 8)
-        for element in self._shown() if elements is None else elements:
-            widget = self.itemWidget(element)
-            if widget is None:  # a resize while the column is being filled: the card is not set yet
-                continue
+        if widget.minimumWidth() != width:
             widget.setFixedWidth(width)
-            element.setSizeHint(QSize(width, widget.heightForWidth(width)))
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        super().resizeEvent(event)
-        if not self._filling:  # filling fits the cards once at the end
-            self._fit()
+        size = QSize(width, widget.heightForWidth(width))
+        if item.sizeHint() != size:
+            item.setSizeHint(size)
 
     def focusInEvent(self, event: QFocusEvent) -> None:
         super().focusInEvent(event)
@@ -229,7 +225,7 @@ class TaskColumn(QListWidget):
         elements = self.selectedItems()
         if not elements:
             return
-        snapshot = self.itemWidget(elements[0]).grab()
+        snapshot = self.mount_item(elements[0]).grab()
         pixmap = QPixmap(snapshot.size())
         pixmap.setDevicePixelRatio(snapshot.devicePixelRatio())
         pixmap.fill(Qt.GlobalColor.transparent)

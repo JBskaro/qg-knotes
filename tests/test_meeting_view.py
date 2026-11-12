@@ -10,14 +10,15 @@ import time
 import unittest
 from unittest import mock
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QPoint, Qt, QUrl
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QPushButton, QScrollBar
 
 from knotes import catalog, minutes, notes, transcript, kinds
 from knotes.ui import export_dialog, style
 from knotes.ui import meeting_view
 from knotes.ui import minutes_view as minutes_window
-from knotes.ui.meeting_view import MINUTES, NOTES, TRANSCRIPT, MeetingView
+from knotes.ui.meeting_view import MINUTES, NOTES, TRANSCRIPT, MeetingView, PhraseEdit, PhraseRow
 
 app = QApplication.instance() or QApplication([])
 
@@ -45,9 +46,9 @@ class TestMeetingView(unittest.TestCase):
         self._temporary.cleanup()
 
     def _phrase_size(self) -> int:
-        caption = self.window._rows[0].caption
+        caption = self.window._rows[0]
         caption.ensurePolished()
-        return caption.fontInfo().pixelSize()
+        return caption.font().pointSize()
 
     def test_closing_right_after_a_place_from_the_minutes(self):
         """The highlight of a phrase is taken off later; a meeting closed before that raises no error."""
@@ -96,6 +97,80 @@ class TestMeetingView(unittest.TestCase):
             self.window._font_size(-1)
         app.processEvents()
         self.assertLess(self._phrase_size(), before)
+
+    def test_phrase_playback_and_inline_edit_after_widget_reduction(self):
+        row = PhraseRow(3, 12.0, "Original phrase", True)
+        self.addCleanup(row.close)
+        row.resize(400, 60)
+        row.show()
+        app.processEvents()
+        played, fixed = [], []
+        row.play.connect(lambda value: played.append(value))
+        row.fixed.connect(lambda number, value: fixed.append((number, value)))
+        self.assertTrue(row.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse)
+        QTest.mouseClick(row.time, Qt.MouseButton.LeftButton)
+        self.assertEqual(played, [row])
+        QTest.mouseDClick(row, Qt.MouseButton.LeftButton, pos=QPoint(120, 15))
+        field = row.findChild(PhraseEdit)
+        self.assertIsNotNone(field)
+        field.selectAll()
+        QTest.keyClicks(field, "Changed phrase")
+        QTest.keyClick(field, Qt.Key.Key_Return)
+        app.processEvents()
+        self.assertEqual(fixed, [(3, "Changed phrase")])
+        self.assertEqual(row.text(), "Changed phrase")
+        self.assertIsNone(row._editor)
+
+    def test_phrase_edit_escape_and_no_audio(self):
+        row = PhraseRow(0, 1.0, "Keep this phrase", False)
+        self.addCleanup(row.close)
+        row.resize(400, 60)
+        row.show()
+        app.processEvents()
+        fixed = []
+        row.fixed.connect(lambda number, value: fixed.append((number, value)))
+        self.assertFalse(row.time.isEnabled())
+        QTest.mouseDClick(row, Qt.MouseButton.LeftButton, pos=QPoint(120, 15))
+        field = row.findChild(PhraseEdit)
+        self.assertIsNotNone(field)
+        QTest.keyClick(field, Qt.Key.Key_Escape)
+        app.processEvents()
+        self.assertEqual(row.text(), "Keep this phrase")
+        self.assertEqual(fixed, [])
+        self.assertIsNone(row._editor)
+
+    def test_wrapped_phrase_editor_tracks_row_width(self):
+        row = PhraseRow(0, 1.0, "A long phrase with several words. " * 12, True)
+        self.addCleanup(row.close)
+        row.resize(250, 50)
+        row.show()
+        app.processEvents()
+        QTest.mouseDClick(row, Qt.MouseButton.LeftButton, pos=QPoint(120, 15))
+        app.processEvents()
+        field = row.findChild(PhraseEdit)
+        self.assertIsNotNone(field)
+        narrow_height = field.height()
+        self.assertGreater(row.minimumHeight(), 50)
+        row.resize(400, row.height())
+        app.processEvents()
+        self.assertEqual(field.width(), 400 - row.TIME_WIDTH)
+        self.assertLess(field.height(), narrow_height)
+        QTest.keyClick(field, Qt.Key.Key_Escape)
+        app.processEvents()
+        self.assertIsNone(row._editor)
+
+    def test_phrase_edit_is_saved_when_switching_to_minutes(self):
+        self.window.show_tab(TRANSCRIPT)
+        row = self.window._rows[0]
+        QTest.mouseDClick(row, Qt.MouseButton.LeftButton, pos=QPoint(120, 15))
+        app.processEvents()
+        field = row.findChild(PhraseEdit)
+        self.assertIsNotNone(field)
+        field.selectAll()
+        QTest.keyClicks(field, "Changed before switching")
+        self.window.show_tab(MINUTES)
+        app.processEvents()
+        self.assertEqual(transcript.phrases(self.window.folder)["фразы"][0]["текст"], "Changed before switching")
 
     def _visible_items(self) -> tuple[bool, bool]:
         app.processEvents()
@@ -157,6 +232,24 @@ class TestMeetingView(unittest.TestCase):
         kind.to_place.connect(places.append)
         blocks[0].findChild(QLabel, "текст_раздела").linkActivated.emit("#340")
         self.assertEqual(places, [340.0])
+
+    def test_long_minutes_keep_the_last_item_and_its_timestamp(self):
+        text = "# Итоги\n\n## Решения\n\n" + "\n".join(
+            f"{n}. Согласовали подробное решение и дальнейшие действия. [00:05]" for n in range(1, 81)
+        )
+        (self.window.folder / minutes.FILE).write_text(text, encoding="utf-8")
+        self.window.resize(900, 650)
+        view = self.window.minutes
+        view.display()
+        for _ in range(4):
+            app.processEvents()
+        body = view.sheet.findChild(minutes_window.SectionText)
+        self.assertIsNotNone(body)
+        self.assertIn("80.", body.toPlainText())
+        self.assertGreater(view._paging.verticalScrollBar().maximum(), 0)
+        self.assertGreaterEqual(body.viewport().height() + 1, body.document().size().height())
+        body.anchorClicked.emit(QUrl("#5"))
+        self.assertEqual(self.window.tab(), TRANSCRIPT)
 
     def test_english_minutes_shown_as_russian(self):
         """Participants label in the minutes' own language, who and when apart, the analyst section dashed."""
@@ -240,6 +333,92 @@ class TestMeetingView(unittest.TestCase):
         self.window.show_tab(TRANSCRIPT)
         self.assertEqual(self.window._rows, rows)
 
+    def test_participant_filter_survives_transcript_rebuild(self):
+        self.window.show_tab(TRANSCRIPT)
+        app.processEvents()
+        self.assertEqual([row.number for row in self.window._rows], [0, 1])
+        self.window._filter_fn("Я")
+        transcript.fix_phrase(self.window.folder, 0, "Обновлённая фраза")
+        self.window.show_tab(TRANSCRIPT)
+        app.processEvents()
+        self.assertEqual([row.number for row in self.window._rows], [0])
+
+    def _long_transcript(self):
+        transcript.save(
+            self.window.folder,
+            [
+                {
+                    "начало": number * 3.0,
+                    "конец": number * 3.0 + 2,
+                    "кто": "Я",
+                    "текст": "Дальний результат" if number in (180, 220) else "Длинная фраза с переносом. " * 8,
+                }
+                for number in range(240)
+            ],
+            {"длительность": 720, "провайдер": "OpenRouter", "стоимость": 0.1},
+            [],
+        )
+        self.window.resize(850, 650)
+        self.window.show_tab(TRANSCRIPT)
+        self._settle_scroll()
+
+    @staticmethod
+    def _settle_scroll():
+        for _ in range(5):
+            app.processEvents()
+
+    def _phrase_in_view(self, number: int) -> bool:
+        scroll = self.window.scroll_area
+        row = next((row for row in self.window._rows if row.number == number), None)
+        if row is None:
+            return False
+        y = row.mapTo(scroll.viewport(), QPoint()).y()
+        return 0 <= y < scroll.viewport().height()
+
+    def test_long_transcript_mounts_nearby_phrases_and_reaches_the_end(self):
+        self._long_transcript()
+        self.assertTrue(self._phrase_in_view(0))
+        self.assertFalse(any(row.number == 239 for row in self.window._rows))
+        bar = self.window.scroll_area.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        self._settle_scroll()
+        self.assertTrue(self._phrase_in_view(239))
+        self.assertEqual(bar.value(), bar.maximum())
+        self.assertFalse(any(row.number == 0 for row in self.window._rows))
+        self.window.show_tab(MINUTES)
+        self.window.show_tab(TRANSCRIPT)
+        self._settle_scroll()
+        self.assertTrue(self._phrase_in_view(239))
+
+    def test_search_and_timestamp_reach_phrases_outside_the_view(self):
+        self._long_transcript()
+        self.window.search.setText("дальний результат")
+        self.window._enter()
+        self._settle_scroll()
+        self.assertEqual(self.window._found, 2)
+        self.assertTrue(self._phrase_in_view(180))
+        self.window._step(1)
+        self._settle_scroll()
+        self.assertTrue(self._phrase_in_view(220))
+        self.window.show_tab(MINUTES)
+        self.window.show_place(75)
+        self._settle_scroll()
+        self.assertTrue(self._phrase_in_view(25))
+
+    def test_sidebar_mark_reaches_unmounted_page(self):
+        self._long_transcript()
+        notes.add(self.window.folder, 600, "Дальняя отметка")
+        self.window.refresh()
+        self.window.show_participants(True)
+        self._settle_scroll()
+        self.assertFalse(any(row.number == 200 for row in self.window._rows))
+        link = next(
+            button for button in self.window.panel.findChildren(QPushButton) if "Дальняя отметка" in button.text()
+        )
+        QTest.mouseClick(link, Qt.MouseButton.LeftButton)
+        self._settle_scroll()
+        self.assertTrue(self._phrase_in_view(200))
+
     def test_name_typed_shows_without_rebuilding(self):
         self.window.show_tab(TRANSCRIPT)
         rows = list(self.window._rows)
@@ -292,7 +471,7 @@ class TestMeetingView(unittest.TestCase):
         self.assertTrue(self.window._search_delay.isActive())
         self.window._search_delay.timeout.emit()
         self.assertEqual(self.window.found.text(), "1 из 1")
-        self.assertIn("background", self.window._rows[1].caption.text())
+        self.assertIn("background", self.window._rows[1].text())
 
     def test_note_text_shown_as_typed(self):
         """A note "P&L <b>план</b>" is text: not markup, and the ampersand is not swallowed by the button."""

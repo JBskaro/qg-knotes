@@ -228,7 +228,7 @@ class TestModelsWindow(unittest.TestCase):
         local_model = window.recognition.local_model
         self.assertEqual(
             [form_layout.isRowVisible(s) for s in [*speech._network_rows, *local_model.rows]],
-            [False, False, False, True, True],
+            [False, False, False, True, True, True],
         )
         self.assertEqual(local_model.model_label.text(), "GigaAM v3 · не скачана")
         _download(self.folder, self.catalog[1])
@@ -237,7 +237,7 @@ class TestModelsWindow(unittest.TestCase):
         speech.preset.setCurrentIndex(speech.preset.findData("openrouter"))  # cloud: address, API key, model again
         self.assertEqual(
             [form_layout.isRowVisible(s) for s in [*speech._network_rows, *local_model.rows]],
-            [True, True, True, False, False],
+            [True, True, True, False, False, False],
         )
         speech.preset.setCurrentIndex(speech.preset.findData(providers.LOCAL))
         self.assertEqual(speech.chosen_model, "whisper-large-v3-turbo-int8")  # changing the preset did not erase it

@@ -60,7 +60,7 @@ class ProjectPage(QWidget):
         self._save_later = QTimer(self, singleShot=True, interval=700)
         self._save_later.timeout.connect(self.save)
         meetings = [v for v in catalog.list_(recordings) if v.project == project]
-        project_tasks = tasks.tasks(recordings, project)
+        project_tasks = tasks.tasks(recordings, project, meetings)
         self._past = prep.past(meetings, project_tasks)  # read once: an edit of the prep does not read every meeting
         self.sheet = QWidget()
         self.sheet.setMaximumWidth(780)

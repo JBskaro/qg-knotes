@@ -6,9 +6,11 @@ is dropped, a key not saved says so."""
 import unittest
 from unittest import mock
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFormLayout, QWidget
 
-from knotes import providers
+from knotes import minutes, providers
 from knotes import settings
 from knotes.ui import settings_window
 from knotes.ui import connection
@@ -102,6 +104,25 @@ class TestConnectionBlock(unittest.TestCase):
         block.model.setEditText("elevenlabs/scribe-v2")
         block.model.lineEdit().editingFinished.emit()
         self.assertEqual(self.changes["model"], "")
+
+    def test_manual_minutes_model_survives_a_late_list_and_reaches_request(self):
+        window = settings_window.SettingsWindow(settings.Settings(minutes_service="openrouter"))
+        self.addCleanup(window.deleteLater)
+        window.show_section("протоколы")
+        block = window.connections["протоколы"]
+        field = block.model.lineEdit()
+        field.selectAll()
+        custom = "publisher/model-preview:free"
+        QTest.keyClicks(field, custom)
+        self.assertEqual(window.settings.minutes_model_id, "")
+        block._show_models([("publisher/other-model", "Other model")])
+        self.assertEqual(field.text(), custom)
+        QTest.keyClick(field, Qt.Key.Key_Return)
+        self.assertEqual(window.settings.minutes_model_id, custom)
+        with mock.patch.object(minutes, "instruction", return_value="test"):
+            params = minutes.params(window.settings)
+        self.assertEqual(params.model, custom)
+        self.assertEqual(params.service.id, "openrouter")
 
     def test_model_list_without_id_is_said_clearly(self):
         block = self._block("протоколы", settings.Settings(minutes_service="свой"))

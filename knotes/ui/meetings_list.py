@@ -2,33 +2,45 @@
 """The meeting list of the meetings window: rows follow the column width, selected meetings are dragged onto a project
 as a small card under the pointer."""
 
-from PySide6.QtCore import QMimeData, QPoint, QRectF, Qt
-from PySide6.QtGui import QDrag, QFontMetrics, QPainter, QPainterPath, QPalette, QPen, QPixmap, QResizeEvent
-from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QWidget
+from collections.abc import Callable
+
+from PySide6.QtCore import QMimeData, QPoint, QRectF, QSize, Qt
+from PySide6.QtGui import QDrag, QFontMetrics, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtWidgets import QAbstractItemView, QListWidgetItem, QWidget
 
 from knotes.ui import style
+from knotes.ui.viewport_list import ViewportList
 from knotes.language import tr
 
 MEETINGS_MIME = "application/x-qg-knotes-meetings"  # dragged meetings: folder paths separated by line breaks
+DAY_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
-class MeetingsList(QListWidget):
+class MeetingsList(ViewportList):
     """Meeting list from which meetings can be dragged onto a project."""
 
-    def __init__(self):
+    def __init__(self, make_row: Callable[[QListWidgetItem], QWidget]):
         super().__init__()
+        self._make_row = make_row
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.setDefaultDropAction(Qt.DropAction.CopyAction)
 
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        """Rows follow the column width, also when it narrows: the row widgets do not follow the column themselves."""
-        super().resizeEvent(event)
+    def _make_widget(self, item: QListWidgetItem) -> QWidget:
+        if item.data(Qt.ItemDataRole.UserRole) is not None:
+            return self._make_row(item)
+        label = style.caption(item.data(DAY_ROLE))
+        label.setObjectName("группа")
+        return label
+
+    def _fit_widget(self, item: QListWidgetItem, widget: QWidget) -> None:
         width = self.viewport().width()
-        for number in range(self.count()):
-            line = self.itemWidget(self.item(number))
-            if line is not None and line.width() != width:
-                line.resize(width, line.height())
+        if widget.width() != width:
+            widget.resize(width, widget.height())
+        if item.data(Qt.ItemDataRole.UserRole) is not None:
+            size = QSize(0, widget.sizeHint().height())
+            if item.sizeHint() != size:
+                item.setSizeHint(size)
 
     def mimeData(self, elements: list[QListWidgetItem]) -> QMimeData:
         data = QMimeData()
