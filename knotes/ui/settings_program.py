@@ -19,9 +19,10 @@ UI_LANGUAGES = language.LANGUAGES  # in their own names: anyone finds their lang
 
 
 class ProgramPage(Page):
-    """Signal restart(): the interface language changed and the user asks to restart the program now."""
+    """Signals for restarting after a language change and manually checking for updates."""
 
     restart = Signal()
+    check_updates = Signal()
 
     def __init__(self, editor: Editor):
         super().__init__(editor)
@@ -36,8 +37,11 @@ class ProgramPage(Page):
             row_label(tr("Start with Windows"), tr(HINTS["автозапуск"])),
             column(row(autostart), self.autostart_result),
         )
+        check_updates = QPushButton(tr("Проверить обновления"))
+        check_updates.clicked.connect(self.check_updates.emit)
         form_layout.addRow(
-            row_label(tr("Проверять обновления"), tr(HINTS["обновления"])), row(editor.switch("check_for_updates"))
+            row_label(tr("Проверять обновления"), tr(HINTS["обновления"])),
+            row(editor.switch("check_for_updates"), check_updates),
         )
         form_layout.addRow(row_label(tr("AI assistant (MCP)"), tr(HINTS["ии"])), self._ai_connection())
         self.hotkeys = HotkeyRows(editor)

@@ -33,11 +33,12 @@ def _ink() -> QColor:
 
 class SettingsWindow(QWidget):
     """Signal changed(Settings) after each change; the API key is saved to the Windows credential store at once.
-    restart(): the interface language changed and the user asks to restart the program now. Shown in the
-    meetings window instead of the list."""
+    restart(): the interface language changed and the user asks to restart the program now.
+    check_updates(): the user asks to check for a new version. Shown in the meetings window instead of the list."""
 
     changed = Signal(object)
     restart = Signal()
+    check_updates = Signal()
 
     def __init__(self, config: settings.Settings, parent_: QWidget | None = None):
         super().__init__(parent_)
@@ -58,6 +59,7 @@ class SettingsWindow(QWidget):
         self.meetings = MeetingsPage(self.editor)
         self.program = ProgramPage(self.editor)
         self.program.restart.connect(self.restart)
+        self.program.check_updates.connect(self.check_updates)
         self.sections, self.pages = QListWidget(), QStackedWidget()
         self.sections.setObjectName("разделы")
         self.sections.setFixedWidth(190)

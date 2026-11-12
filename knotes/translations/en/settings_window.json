@@ -37,7 +37,7 @@
  "Программа будет запускаться вместе с Windows и ждать у часов.": "The app starts with Windows and waits in the notification area.",
  "Протоколы": "Minutes",
  "Работает из любой программы. Щелкните в поле и нажмите нужное сочетание.": "Works from any app. Click the field and press the shortcut.",
- "Раз в день программа спрашивает GitHub, вышла ли новая версия, и предлагает обновиться. Обновление ставится само, программа перезапускается. Проверить сразу - у значка возле часов, «Проверить обновления».": "Once a day the program asks GitHub whether a new version is out and offers to update. The update installs itself and the program restarts. To check now, use \"Check for updates\" at the icon by the clock.",
+ "Раз в день программа спрашивает GitHub, вышла ли новая версия, и предлагает обновиться. Обновление ставится само, программа перезапускается. Проверить сразу можно кнопкой здесь или у значка возле часов.": "Once a day the program asks GitHub whether a new version is out and offers to update. The update installs itself and the program restarts. To check now, use the button here or the icon by the clock.",
  "Русский": "Russian",
  "Светлое": "Light",
  "Светлое или темное оформление окон программы.": "Light or dark app windows.",

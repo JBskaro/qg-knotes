@@ -236,7 +236,7 @@ class App(QObject):
     # --- updates ------------------------------------------------------------------------------------------------
 
     def check_updates(self, manual: bool = False) -> None:
-        """Once a day by itself (only the build can update itself), at once from the tray menu."""
+        """Once a day by itself (only the build can update itself), or manually from the tray or settings."""
         self.updates.check(self.settings, manual)
 
     def _updates_checked(self, today: str) -> None:
@@ -767,6 +767,7 @@ class App(QObject):
         config = SettingsWindow(self.settings)
         config.changed.connect(self._changes_of(self.settings))
         config.restart.connect(self.restart)
+        config.check_updates.connect(lambda: self.check_updates(manual=True))
         self.window.show_page(config, tr("Settings"), "настройки")
         self.show_window()
         if "настройки" not in self.settings.tips_shown:
