@@ -258,6 +258,22 @@ class TestModelsWindow(unittest.TestCase):
         self.assertEqual(local_model.model_label.text().split(" · ")[0], "GigaAM v3")
         self.assertTrue(local_model.download.isHidden())  # downloaded: only choosing another one is left
 
+    def test_settings_rechecks_model_files_when_opening_the_model_picker(self):
+        window = settings_window.SettingsWindow(settings.Settings(provider=providers.LOCAL))
+        self.addCleanup(window.deleteLater)
+        local_model = window.recognition.local_model
+        self.assertEqual(local_model.model_label.text(), "GigaAM v3 · не скачана")
+        _download(self.folder, self.catalog[0])  # another download finished while settings were open
+
+        def check_picker():
+            picker = local_model._models_window
+            self.assertEqual(_lines(picker._here), [("GigaAM v3", ["Удалить"])])
+            self.assertNotIn("не скачана", local_model.model_label.text())
+            self.assertTrue(local_model.download.isHidden())
+
+        with mock.patch.object(models_window.QDialog, "exec", side_effect=check_picker):
+            local_model.pick_model()
+
     def test_enabled_diarization_downloads_models_at_once(self):
         window = settings_window.SettingsWindow(settings.Settings(provider=providers.LOCAL, speaker_diarization=False))
         self.addCleanup(window.deleteLater)

@@ -4,7 +4,7 @@
 
 import logging
 
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, Qt
 from PySide6.QtWidgets import QFormLayout, QLabel, QPushButton, QWidget
 
 from knotes import failures, models, settings
@@ -29,6 +29,10 @@ class LocalModelRows(QObject):
         self._editor, self._speech, self._page = editor, speech, page
         self._models_window: ModelsWindow | None = None  # one per settings window: a started download shows again
         self._diarization_job: ModelDownload | None = None
+        self._model_files = QFileSystemWatcher(self)
+        self._status_update = QTimer(self, singleShot=True, interval=100)
+        self._model_files.directoryChanged.connect(lambda _folder: self._status_update.start())
+        self._status_update.timeout.connect(self._refresh_from_disk)
         self.model_label = QLabel()
         self.model_label.setTextFormat(Qt.TextFormat.PlainText)  # the model name comes from Hugging Face
         self.download = QPushButton(tr("Download"))
@@ -61,6 +65,7 @@ class LocalModelRows(QObject):
 
     def refresh(self) -> None:
         state = self.state()
+        self._watch_model(state)
         can_use_gpu = state.model is not None and models.supports_gpu(state.model.kind, state.model.id)
         self.device.setEnabled(can_use_gpu)
         self.device.select(can_use_gpu and self._editor.settings.local_gpu)
@@ -68,11 +73,34 @@ class LocalModelRows(QObject):
             self.model_label.setText(tr("No model selected"))
             self.download.hide()
             return
-        downloaded = state.model not in state.missing
-        size = models.size_on_disk(settings.models_folder(), state.model)
-        details_text = description(state.model, size) if downloaded else tr("not downloaded")
+        downloaded = state.downloaded
+        details_text = tr("not downloaded")
+        if downloaded:
+            details_text = description(state.model, models.size_on_disk(settings.models_folder(), state.model))
         self.model_label.setText(f"{tr(state.model.title)} · {details_text}")
         self.download.setVisible(not downloaded)
+
+    def _watch_model(self, state: LocalModel) -> None:
+        """Watch the selected model's folder and the place where the models directory can appear."""
+        wanted = set()
+        if self._speech.local_engine:
+            folder = settings.models_folder()
+            if root := next((path for path in (folder, *folder.parents) if path.is_dir()), None):
+                wanted.add(str(root))
+            if state.model is not None and (place := folder / state.model.id).is_dir():
+                wanted.add(str(place))
+        watching = set(self._model_files.directories())
+        if obsolete := watching - wanted:
+            self._model_files.removePaths(sorted(obsolete))
+        if needed := wanted - watching:
+            self._model_files.addPaths(sorted(needed))
+
+    def _refresh_from_disk(self) -> None:
+        before = self.model_label.text()
+        self.refresh()
+        picker = self._models_window
+        if self.model_label.text() != before and picker is not None and picker.isVisible():
+            picker.refresh()
 
     def tip(self) -> str:
         """The same model state and size as in the first-run setup: with the speaker models when they are on."""
@@ -132,6 +160,7 @@ class LocalModelRows(QObject):
 
     def pick_model(self, download: bool = False) -> None:
         """The model window: search on Hugging Face, languages, mirror, own link; download: start the chosen one."""
+        self.refresh()  # a download may have completed before the file notification reaches the settings
         config = self._editor.settings
         if self._models_window is None:
             self._models_window = ModelsWindow(

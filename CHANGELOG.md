@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.3 - 2026-11-13
+
+- Keep the local speech model status in sync between Settings and the model picker when a download finishes or files are removed (#3).
+
 ## 0.22.2 - 2026-11-13
 
 - Speed up opening the meeting list and task board, and load long transcripts and minutes progressively.
