@@ -1,6 +1,6 @@
 [project]
 name = "qg-knotes"
-version = "0.22.3"
+version = "0.22.4"
 description = "Records online meetings without a bot, transcribes them with speaker labels and writes minutes"
 readme = "README.md"
 license = "GPL-3.0-only"

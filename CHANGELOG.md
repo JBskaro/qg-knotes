@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.4 - 2026-11-13
+
+- Restore recording prompts for desktop Teams when Windows reports an active microphone session without updating the microphone access registry.
+
 ## 0.22.3 - 2026-11-13
 
 - Keep the local speech model status in sync between Settings and the model picker when a download finishes or files are removed (#3).

@@ -3,7 +3,8 @@
 
 The ConsentStore\\microphone key: subkeys of packaged apps (MSTeams_8wekyb3d8bbwe) and NonPackaged
 with exe paths that use "#" instead of "\\". A program is using the microphone if LastUsedTimeStart is set and
-LastUsedTimeStop = 0. Recording is offered only if the microphone is busy for more than a few seconds (not an
+LastUsedTimeStop = 0. New Teams can have an active capture session without updating that key.
+Recording is offered only if the microphone is busy for more than a few seconds (not an
 accidental click), once per meeting and not right after a recording ends. Muting releases the microphone briefly:
 the meeting does not end because of it, and a declined recording stays declined until the meeting ends.
 """
@@ -11,8 +12,16 @@ the meeting does not end because of it, and a declined recording stays declined 
 import dataclasses
 import pathlib
 import winreg
+from ctypes import POINTER, cast
+
+from comtypes import CLSCTX_ALL, COMError
+from pycaw.constants import DEVICE_STATE, AudioSessionState, EDataFlow
+from pycaw.pycaw import AudioUtilities, IAudioSessionControl2, IAudioSessionManager2
+
+from knotes import system
 
 KEY = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+TEAMS_PACKAGE = "MSTeams_8wekyb3d8bbwe"
 LONGER_S = 3
 POLL_S = 1
 BREAK_S = 60
@@ -55,9 +64,50 @@ def _read(path: str) -> dict[str, bool]:
     return result
 
 
-def read() -> dict[str, bool]:
+def _capture_processes(device: object) -> set[int]:
+    interface = device.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
+    manager = cast(interface, POINTER(IAudioSessionManager2))
+    sessions = manager.GetSessionEnumerator()
+    active = set()
+    for index in range(sessions.GetCount()):
+        try:
+            control = sessions.GetSession(index).QueryInterface(IAudioSessionControl2)
+            if control.GetState() == AudioSessionState.Active and (pid := control.GetProcessId()):
+                active.add(pid)
+        except COMError:  # a call can close its audio session between enumeration and inspection
+            continue
+    return active
+
+
+def _teams_uses_microphone() -> bool:
+    """Inspect active capture sessions, including a microphone other than the Windows default."""
+    try:
+        enumerator = AudioUtilities.GetDeviceEnumerator()
+        devices = enumerator.EnumAudioEndpoints(EDataFlow.eCapture.value, DEVICE_STATE.ACTIVE.value)
+        count = devices.GetCount()
+    except (COMError, OSError):
+        return False
+    for index in range(count):
+        try:
+            active = _capture_processes(devices.Item(index))
+        except (COMError, OSError):  # a device can be unplugged or unavailable
+            continue
+        if any(pathlib.PureWindowsPath(system.process_path(pid)).name.lower() == "ms-teams.exe" for pid in active):
+            return True
+    return False
+
+
+def read(apps: list[str] | None = None) -> dict[str, bool]:
     """Programs Windows gave the microphone to: exe path or package name -> whether it is busy now."""
-    return _read(KEY)
+    status = _read(KEY)
+    if (
+        apps is not None
+        and any(app.lower() == TEAMS_PACKAGE.lower() for app in apps)
+        and not status.get(TEAMS_PACKAGE)
+        and _teams_uses_microphone()
+    ):
+        status[TEAMS_PACKAGE] = True
+    return status
 
 
 def meetings(status: dict[str, bool], apps: list[str], custom_one: str = "") -> set[str]:

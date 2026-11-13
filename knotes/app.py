@@ -415,7 +415,7 @@ class App(QObject):
     def _poll_detector(self) -> None:
         if not self.settings.suggest_recording:
             return
-        step = self.detector.step(detector.read(), time.monotonic(), self.recording is not None)
+        step = self.detector.step(detector.read(self.detector.apps), time.monotonic(), self.recording is not None)
         for program in step.suggest:
             name = settings.program_name(program)
             self._notify_with_buttons(

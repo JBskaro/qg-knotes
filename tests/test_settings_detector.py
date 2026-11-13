@@ -86,6 +86,27 @@ class TestDetector(unittest.TestCase):
         self.assertEqual((step.suggest, step.finished_items), (set(), {"Zoom.exe"}))
         self.assertEqual(d.step({"Zoom.exe": False}, 60 + detector.END_S, False).finished_items, set())  # only once
 
+    def test_new_teams_capture_without_registry_activity_offers_recording(self):
+        device = object()
+        devices = mock.Mock()
+        devices.GetCount.return_value = 1
+        devices.Item.return_value = device
+        enumerator = mock.Mock()
+        enumerator.EnumAudioEndpoints.return_value = devices
+        apps = [detector.TEAMS_PACKAGE]
+        watcher = detector.Detector(apps)
+        with (
+            mock.patch.object(detector, "_read", side_effect=lambda _: {detector.TEAMS_PACKAGE: False}),
+            mock.patch.object(detector.AudioUtilities, "GetDeviceEnumerator", return_value=enumerator),
+            mock.patch.object(detector, "_capture_processes", return_value={42}) as capture,
+            mock.patch.object(detector.system, "process_path", return_value=r"C:\Teams\ms-teams.exe"),
+        ):
+            self.assertFalse(detector.read(["Zoom.exe"])[detector.TEAMS_PACKAGE])
+            capture.assert_not_called()
+            self.assertEqual(watcher.step(detector.read(apps), 0, False).suggest, set())
+            self.assertEqual(watcher.step(detector.read(apps), detector.LONGER_S, False).suggest, set(apps))
+            capture.assert_called_with(device)
+
     def test_decline_lasts_until_meeting_end(self):
         """Muted: the program released the microphone, unmuted: took it again; it is the same meeting, do not offer
         a second time. A new meeting comes after a long break."""
