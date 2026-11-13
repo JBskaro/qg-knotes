@@ -481,10 +481,6 @@ def edit(recordings: pathlib.Path, key: str, edit_item: Edit) -> None:
     _write(recordings, data)
 
 
-def set_state(recordings: pathlib.Path, key: str, status: str) -> None:
-    edit(recordings, key, Edit(status=status))
-
-
 @transcript.locked_edit(FILE)
 def reorder(recordings: pathlib.Path, status: str, keys: list[str], column: str | None = None) -> None:
     """Puts the cards into the column of the state in this order: after a card is dragged, the column remembers the

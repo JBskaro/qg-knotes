@@ -48,6 +48,18 @@ class TestMeetingsList(unittest.TestCase):
         self.window.close()
         self._temporary.cleanup()
 
+    def test_update_button_only_when_a_release_is_available(self):
+        self.assertFalse(self.window.update_button.isVisible())
+        clicks = []
+        self.window.update_requested.connect(lambda: clicks.append(True))
+        self.window.show_update("99.0.0")
+        self.assertTrue(self.window.update_button.isVisible())
+        self.assertIn("99.0.0", self.window.update_button.toolTip())
+        self.window.update_button.click()
+        self.assertEqual(clicks, [True])
+        self.window.show_update("")
+        self.assertFalse(self.window.update_button.isVisible())
+
     def _meeting(self, name: str, minutes_text: str = "") -> pathlib.Path:
         folder = self.recordings / name
         folder.mkdir()

@@ -452,7 +452,7 @@ def recognize(provider: Provider, key: str, request: Request) -> dict:
         raise SizeError(tr("The recording exceeds the provider's limit"))
     code, text = _send(provider, key, request)
     if code in SIZE_CODES:
-        log.warning("%s did not take the recording by size or time (code %d): %s", provider.title, code, text[:2000])
+        log.warning("%s did not take the recording by size or time (code %d)", provider.title, code)
         raise SizeError(
             tr("{title} did not manage to take the recording whole (code {code})", title=provider.title, code=code)
         )
@@ -465,7 +465,7 @@ def recognize(provider: Provider, key: str, request: Request) -> dict:
         raise _failure(provider.title, code, text)
     answer = _json(text, provider.title)
     if not readable(answer):
-        log.warning("%s answered in an unknown format: %s", provider.title, text[:2000])
+        log.warning("%s answered in an unknown format", provider.title)
         raise ProviderError(
             tr(
                 "{title} returned the transcript in an unexpected format: no words with their times. Check the server "
@@ -512,7 +512,7 @@ def _reason(text: str) -> str:
         error = json.loads(text).get("error")
     except (ValueError, AttributeError):
         if text.lstrip().startswith("<"):
-            log.warning("a web page instead of the service response: %s", text[:2000])
+            log.warning("a web page instead of the service response")
             return tr("the server answered with a web page")
         return text[:300]
     if isinstance(error, dict):

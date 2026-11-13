@@ -201,8 +201,11 @@ class TestTools(unittest.TestCase):
         result = _call("update_task", task=key, due="", priority="")
         self.assertEqual((result["срок"], result["приоритет"], result["описание"]), (None, "", "По весу"))
         self.assertEqual((self.first / minutes.FILE).read_text(encoding="utf-8"), MINUTES)  # the minutes are the same
+        board_key = next(z.key for z in tasks.tasks(self.recordings) if z.text == result["текст"])
         tasks.edit(
-            self.recordings, key, tasks.Edit(archive=True, checklist=(tasks.ChecklistItem("Спросить склад", True),))
+            self.recordings,
+            board_key,
+            tasks.Edit(archive=True, checklist=(tasks.ChecklistItem("Спросить склад", True),)),
         )
         self.assertNotIn(key, [p["ключ"] for p in _call("list_open_items")["пункты"]])  # an archived one is not open
         archived = next(p for p in _call("list_open_items", include_done=True)["пункты"] if p["ключ"] == key)

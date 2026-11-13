@@ -8,6 +8,7 @@ Run: "QG Knotes.exe --mcp": exchange over standard input and output, without net
 """
 
 import datetime
+import hashlib
 import json
 import pathlib
 import re
@@ -47,12 +48,19 @@ ASSISTANT = "помощник ИИ (MCP)"  # who wrote the minutes when the clie
 PIECE = 30000  # characters of a transcript piece: about 10 thousand tokens, within a client's answer limit
 
 
+def _opaque(prefix: str, value: str) -> str:
+    return prefix + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _meeting(meeting: str) -> catalog.Meeting:
     """Meeting by folder name; foreign paths and unknown names get a clear refusal."""
     custom = bool(meeting) and meeting not in (".", "..") and pathlib.PureWindowsPath(meeting).name == meeting
-    found = catalog.meeting(settings.load().recordings / meeting) if custom else None
+    recordings = settings.load().recordings
+    found = catalog.meeting(recordings / meeting) if custom else None
+    if found is None and meeting.startswith("meeting-"):
+        found = next((v for v in catalog.list_(recordings) if _opaque("meeting-", v.folder.name) == meeting), None)
     if found is None:
-        raise ToolError(f"Нет встречи «{meeting}». Имена встреч - в list_meetings, поле «встреча».")
+        raise ToolError("Встреча не найдена. Имена встреч - в list_meetings, поле «встреча».")
     return found
 
 
@@ -88,27 +96,27 @@ def _card(found: catalog.Meeting) -> dict:
     }
 
 
-def _hider(found: catalog.Meeting) -> privacy.Hider | None:
-    """The user's own assistant is a cloud model too: with the setting on it gets personal data as labels, by the
-    meeting's table of labels."""
+def _people(config: settings.Settings, folder: pathlib.Path | None = None) -> tuple[str, ...]:
+    return privacy.people(folder, config.my_name, vocab.from_data(config.vocabulary)) if config.hide_names else ()
+
+
+def _hidden(folder: pathlib.Path | None, answer: dict, note: str = "", people: tuple[str, ...] = ()) -> dict:
     config = settings.load()
     if not config.hide_personal_data:
-        return None
-    words = vocab.from_data(config.vocabulary)
-    people = privacy.people(found.folder, config.my_name, words) if config.hide_names else ()
-    return privacy.Hider(people, privacy.table(found.folder))
-
-
-def _hidden(found: catalog.Meeting, answer: dict, note: str = "") -> dict:
-    """The answer with personal data as labels; the meeting folder name stays, it names the meeting for the tools.
-    note: the field that gets the note about the labels."""
-    hider = _hider(found)
-    if hider is None:
         return answer
-    result = {k: z if k == "встреча" else _hide_value(hider, z) for k, z in answer.items()}
+    names = (*_people(config, folder), *people) if config.hide_names else ()
+    if folder is None:
+        return _hide_value(privacy.Hider(names), answer)
+    saved = privacy.table(folder)
+    hider = privacy.Hider(names, saved.copy())
+    result = _hide_value(hider, answer)
+    if hider.table != saved:
+        with transcript.locked(folder / privacy.LABELS):
+            hider = privacy.Hider(names, privacy.table(folder))
+            result = _hide_value(hider, answer)
+            privacy.remember(folder, hider)
     if note:
         result[note] = f"{privacy.NOTE}\n\n{result[note]}"
-    privacy.remember(found.folder, hider)
     return result
 
 
@@ -118,8 +126,17 @@ def _hide_value(hider: privacy.Hider, value: object) -> object:
     if isinstance(value, list):
         return [_hide_value(hider, z) for z in value]
     if isinstance(value, dict):
-        return {k: _hide_value(hider, z) for k, z in value.items()}
+        return {k: _hide_field(hider, k, z) for k, z in value.items()}
     return value
+
+
+def _hide_field(hider: privacy.Hider, field: str, value: object) -> object:
+    if field == "ключ" and isinstance(value, str) and "|" in value:
+        return _opaque("task-", value)
+    hidden = _hide_value(hider, value)
+    if field == "встреча" and isinstance(value, str) and hidden != value:
+        return _opaque("meeting-", value)
+    return hidden
 
 
 def _lines(found: catalog.Meeting) -> list[tuple[float, str]]:
@@ -136,7 +153,7 @@ def list_meetings(
     project: str | None = None, date_from: str | None = None, date_to: str | None = None, limit: int = 50
 ) -> dict:
     meetings = _meetings(project, date_from, date_to)
-    return {"встреч": len(meetings), "встречи": [_card(v) for v in meetings[:limit]]}
+    return {"встреч": len(meetings), "встречи": [_hidden(v.folder, _card(v)) for v in meetings[:limit]]}
 
 
 def search_meetings(
@@ -147,19 +164,25 @@ def search_meetings(
         raise ToolError("query: что искать")
     meetings = _meetings(project, date_from, date_to)
     found, search_text = catalog.find(meetings, query), catalog.for_search(query.strip())
+    matches = [v for v in meetings if v.folder in found][:limit]
     result = [
-        {
-            **_card(v),
-            "совпадений": found[v.folder],
-            "отрывки": [
-                f"[{transcript.time(s)}] {tr}"
-                for s, tr in (_lines(v) if v.status == catalog.READY else [])
-                if search_text in catalog.for_search(tr)
-            ][:3],
-        }
-        for v in [v for v in meetings if v.folder in found][:limit]
+        _hidden(
+            v.folder,
+            {
+                **_card(v),
+                "совпадений": found[v.folder],
+                "отрывки": [
+                    f"[{transcript.time(s)}] {tr}"
+                    for s, tr in (_lines(v) if v.status == catalog.READY else [])
+                    if search_text in catalog.for_search(tr)
+                ][:3],
+            },
+        )
+        for v in matches
     ]
-    return {"запрос": query, "встреч_найдено": len(found), "найдено": result}
+    config = settings.load()
+    people = tuple(name for v in matches for name in _people(config, v.folder))
+    return {**_hidden(None, {"запрос": query}, people=people), "встреч_найдено": len(found), "найдено": result}
 
 
 def get_protocol(meeting: str, view: str = "полный") -> dict:
@@ -169,7 +192,7 @@ def get_protocol(meeting: str, view: str = "полный") -> dict:
         raise ToolError("У встречи нет протокола. Составить его - compose_protocol, по просьбе пользователя.")
     if view not in KINDS:
         raise ToolError(f"view: один из {', '.join(KINDS)}")
-    return {**_card(found), "вид": view, "текст": KINDS[view](file.read_text(encoding="utf-8"))}
+    return _hidden(found.folder, {**_card(found), "вид": view, "текст": KINDS[view](file.read_text(encoding="utf-8"))})
 
 
 def _seconds_of(text: str | None, param: str, by_default: float) -> float:
@@ -201,7 +224,7 @@ def get_transcript(
         "текст": "\n".join(piece),
         "следующий_from_time": transcript.time(next_second) if next_second is not None else None,
     }
-    return _hidden(found, answer)
+    return _hidden(found.folder, answer)
 
 
 def _piece(lines: list[tuple[float, str]]) -> tuple[list[str], float | None]:
@@ -220,26 +243,30 @@ def _piece(lines: list[tuple[float, str]]) -> tuple[list[str], float | None]:
 
 def _task(task: tasks.Task) -> dict:
     o_ = task.origin
-    return {
-        "ключ": task.key,
-        "текст": task.text,
-        "кто": task.who,
-        "срок": task.due.isoformat() if task.due else None,
-        "вид": task.kind,
-        "состояние": task.status,
-        "проект": task.project,
-        "описание": task.description,
-        "метки": list(task.labels),
-        "приоритет": task.priority,
-        "архив": task.archive,
-        "чек_лист": [{"текст": p.text, "сделан": p.is_done} for p in task.checklist],
-        "основание": {
-            "встреча": o_.folder.name if o_.folder else None,
-            "название": o_.title,
-            "дата": o_.date.isoformat(),
-            "время": transcript.time(o_.second) if o_.second is not None else None,
+    return _hidden(
+        o_.folder,
+        {
+            "ключ": task.key,
+            "текст": task.text,
+            "кто": task.who,
+            "срок": task.due.isoformat() if task.due else None,
+            "вид": task.kind,
+            "состояние": task.status,
+            "проект": task.project,
+            "описание": task.description,
+            "метки": list(task.labels),
+            "приоритет": task.priority,
+            "архив": task.archive,
+            "чек_лист": [{"текст": p.text, "сделан": p.is_done} for p in task.checklist],
+            "основание": {
+                "встреча": o_.folder.name if o_.folder else None,
+                "название": o_.title,
+                "дата": o_.date.isoformat(),
+                "время": transcript.time(o_.second) if o_.second is not None else None,
+            },
         },
-    }
+        people=(task.who,) if task.who else (),
+    )
 
 
 def list_open_items(
@@ -286,13 +313,14 @@ def update_task(task: str, **fields: object) -> dict:
     """Change only the passed card fields; for a minutes item the minutes themselves do not change."""
     edit_item = _editing(fields)
     recordings = settings.load().recordings
-    if not any(z.key == task for z in tasks.tasks(recordings)):
-        raise ToolError(f"Нет задачи «{task}». Ключи задач - в list_open_items, поле «ключ».")
+    found = next((z for z in tasks.tasks(recordings) if task in (z.key, _opaque("task-", z.key))), None)
+    if found is None:
+        raise ToolError("Задача не найдена. Ключи задач - в list_open_items, поле «ключ».")
     try:
-        tasks.edit(recordings, task, edit_item)
+        tasks.edit(recordings, found.key, edit_item)
     except ValueError as error:
         raise ToolError(str(error)) from None
-    return next(_task(z) for z in tasks.tasks(recordings) if z.key == task)
+    return next(_task(z) for z in tasks.tasks(recordings) if z.key == found.key)
 
 
 def set_task_status(task: str, status: str) -> dict:
@@ -309,28 +337,41 @@ def get_project_notes(project: str) -> dict:
     """Project info and preparation for the next meeting: the analyst's questions and the collected agenda."""
     recordings = settings.load().recordings
     info = projects.notes(recordings, project)
-    return {
-        "проект": project,
-        "заметки": info.text,
-        "для_модели": info.for_model,
-        "к_следующей_встрече": projects.for_meeting(recordings, project),
-        "повестка": [p.text for p in tasks.agenda(recordings, project)],
-    }
+    config = settings.load()
+    people = (
+        tuple(name for v in _meetings(project, None, None) for name in _people(config, v.folder))
+        if config.hide_names
+        else ()
+    )
+    return _hidden(
+        None,
+        {
+            "проект": project,
+            "заметки": info.text,
+            "для_модели": info.for_model,
+            "к_следующей_встрече": projects.for_meeting(recordings, project),
+            "повестка": [p.text for p in tasks.agenda(recordings, project)],
+        },
+        people=people,
+    )
 
 
 def get_meeting_notes(meeting: str) -> dict:
     """The analyst's notepad for the meeting: the agenda with "discussed" ticks and lines with the recording minute."""
     found = _meeting(meeting)
     notepad = notes.read(found.folder)
-    return {
-        **_card(found),
-        "повестка": [{"пункт": p.text, "обсудили": p.discussed} for p in notepad.agenda],
-        "строки": [
-            {"время": transcript.time(s.second) if s.second is not None else None, "текст": s.text}
-            for s in notepad.lines
-            if s.text.strip()
-        ],
-    }
+    return _hidden(
+        found.folder,
+        {
+            **_card(found),
+            "повестка": [{"пункт": p.text, "обсудили": p.discussed} for p in notepad.agenda],
+            "строки": [
+                {"время": transcript.time(s.second) if s.second is not None else None, "текст": s.text}
+                for s in notepad.lines
+                if s.text.strip()
+            ],
+        },
+    )
 
 
 def get_costs(project: str | None = None, date_from: str | None = None, date_to: str | None = None) -> dict:
@@ -352,15 +393,18 @@ def get_costs(project: str | None = None, date_from: str | None = None, date_to:
             for kind, name, how_many, share in summary.models(result)
         ],
         "по_встречам": [
-            {
-                "встреча": s_.folder.name if s_.folder else None,
-                "название": s_.title,
-                "дата": f"{s_.date:%Y-%m-%d}",
-                "удалена": s_.folder is None,
-                "речь": round(s_.result.cost - s_.result.minutes_list, 4),
-                "протокол": round(s_.result.minutes_list, 4),
-                "всего": round(s_.result.cost, 4),
-            }
+            _hidden(
+                s_.folder,
+                {
+                    "встреча": s_.folder.name if s_.folder else None,
+                    "название": s_.title,
+                    "дата": f"{s_.date:%Y-%m-%d}",
+                    "удалена": s_.folder is None,
+                    "речь": round(s_.result.cost - s_.result.minutes_list, 4),
+                    "протокол": round(s_.result.minutes_list, 4),
+                    "всего": round(s_.result.cost, 4),
+                },
+            )
             for s_ in summary.by_meetings(meetings, s, by, expenses_)
         ],
     }
@@ -414,7 +458,7 @@ def compose_protocol(meeting: str, kind: str | None = None) -> dict:
         _restore_kind(found, kind, old_view)
         raise ToolError(failures.text(error)) from error
     price = catalog.properties(found.folder).get("стоимость_протокола")
-    return {**_card(found), "текст": file.read_text(encoding="utf-8"), "стоимость": price}
+    return _hidden(found.folder, {**_card(found), "текст": file.read_text(encoding="utf-8"), "стоимость": price})
 
 
 def get_protocol_task(meeting: str, kind: str | None = None) -> dict:
@@ -435,7 +479,7 @@ def get_protocol_task(meeting: str, kind: str | None = None) -> dict:
         "how_to_save": "Составьте протокол строго по instruction из input и расшифровке и сохраните его "
         "save_protocol (meeting - это поле «встреча»). Ответ - только текст протокола в Markdown.",
     }
-    return _hidden(found, answer, note="input")
+    return _hidden(found.folder, answer, note="input")
 
 
 def save_protocol(meeting: str, text: str, model: str = "") -> dict:
@@ -445,7 +489,7 @@ def save_protocol(meeting: str, text: str, model: str = "") -> dict:
     with transcript.locked(found.folder / minutes.FILE):  # minutes the window writes meanwhile go to the copies
         _save_previous(found.folder)
         minutes.save(found.folder, privacy.restored(found.folder, text), model.strip() or ASSISTANT)
-    return _card(found)
+    return _hidden(found.folder, _card(found))
 
 
 def update_protocol(meeting: str, text: str) -> dict:
@@ -455,7 +499,7 @@ def update_protocol(meeting: str, text: str) -> dict:
     with transcript.locked(found.folder / minutes.FILE):
         _save_previous(found.folder)
         transcript.write_text(found.folder / minutes.FILE, privacy.restored(found.folder, text).rstrip() + "\n")
-    return _card(found)
+    return _hidden(found.folder, _card(found))
 
 
 def set_speaker_names(meeting: str, names: dict[str, str]) -> dict:
@@ -468,12 +512,15 @@ def set_speaker_names(meeting: str, names: dict[str, str]) -> dict:
         raise ToolError(f"Нет участников {', '.join(foreign)}. Есть: {', '.join(participants) or 'никого'}")
     transcript.set_names(found.folder, names)
     shares, speaker_names = transcript.shares(found.folder), transcript.names(found.folder)
-    return {
-        "участники": [
-            {"кто": who, "имя": speaker_names.get(who, who), "доля": round(shares.get(who, 0), 2)}
-            for who in transcript.participants(found.folder)
-        ]
-    }
+    return _hidden(
+        found.folder,
+        {
+            "участники": [
+                {"кто": who, "имя": speaker_names.get(who, who), "доля": round(shares.get(who, 0), 2)}
+                for who in transcript.participants(found.folder)
+            ]
+        },
+    )
 
 
 def set_meeting_info(meeting: str, title: str | None = None, project: str | None = None) -> dict:
@@ -486,7 +533,7 @@ def set_meeting_info(meeting: str, title: str | None = None, project: str | None
     if not fields:
         raise ToolError("Нужно title или project")
     catalog.set_(found.folder, **fields)
-    return _card(_meeting(meeting))
+    return _hidden(found.folder, _card(_meeting(meeting)))
 
 
 # --- descriptions for the client ------------------------------------------------------------------------------

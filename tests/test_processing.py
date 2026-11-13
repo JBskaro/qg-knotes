@@ -18,6 +18,7 @@ from knotes import providers
 from knotes import recognition
 from knotes import vocabulary
 from tests.test_providers import curl_process
+from tests.audio_fixture import write_flac
 
 SR = recognition.SAMPLE_RATE
 
@@ -37,8 +38,8 @@ class TestProcessing(unittest.TestCase):
         noise = np.random.default_rng(0).uniform(-0.5, 0.5, 2 * SR).astype(np.float32)
         microphone, computer = np.zeros(6 * SR, np.float32), np.zeros(6 * SR, np.float32)
         microphone[: 2 * SR], computer[3 * SR : 5 * SR] = noise, noise
-        recognition.write_flac(microphone, self.folder / "микрофон.flac")
-        recognition.write_flac(computer, self.folder / "собеседники.flac")
+        write_flac(microphone, self.folder / "микрофон.flac")
+        write_flac(computer, self.folder / "собеседники.flac")
         self.params = recognition.Params(providers.find("openrouter"), "ключ")
 
     def tearDown(self):
@@ -267,7 +268,7 @@ class TestProcessing(unittest.TestCase):
         in the middle of a window too."""
         path = self.folder / "проба.flac"
         audio = np.concatenate([np.full(SR, 0.05, np.float32), np.full(SR * 2 + 333, 0.4, np.float32)])
-        recognition.write_flac(audio, path)
+        write_flac(audio, path)
         whole_seconds = len(recognition._read_int16(path)) / SR
         whole_levels, whole_anchor = recognition.loudness(recognition._read_int16(path))
         with mock.patch.object(recognition, "_read_int16", side_effect=AssertionError("the whole track was read")):

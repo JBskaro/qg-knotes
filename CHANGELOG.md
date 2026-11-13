@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.22.6 - 2026-11-13
+
+- Show an update notification and keep the Update button next to search when installation is postponed.
+- Apply personal-data masking across MCP meeting and task responses, including task identifiers derived from minutes.
+- Keep imported files separate from same-named recordings and allow interrupted imports to be retried.
+- Update the bundled FFmpeg to 9.0.2 and keep provider response bodies out of diagnostic warnings.
+- Pin GitHub Actions to commit hashes and remove unused code.
+
 ## 0.22.5 - 2026-11-13
 
 - Fix a crash after startup when checking the desktop Teams microphone session.

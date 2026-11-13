@@ -86,13 +86,14 @@ class TestRequest(unittest.TestCase):
                 self._answer(code)
 
     def test_size_refusal_without_raw_body(self):
-        """Cloudflare answers 524 with its HTML page: the user sees a plain text, the page goes to the log."""
+        """Cloudflare answers 524 with its HTML page: the UI and the log get the status without the response body."""
         page = "<!DOCTYPE html><html><head><title>524: A timeout occurred</title></head></html>"
         with self.assertLogs(providers.log, "WARNING") as log_, self.assertRaises(providers.SizeError) as error:
             self._answer(524, page)
         self.assertNotIn("<", str(error.exception))
         self.assertIn("не успел", str(error.exception))
-        self.assertIn("524: A timeout", "\n".join(log_.output))
+        self.assertIn("code 524", "\n".join(log_.output))
+        self.assertNotIn("A timeout", "\n".join(log_.output))
 
     def test_answer_in_unknown_format_refused_before_cache(self):
         """An own server gave words with "text" instead of "word": a plain refusal at once, not "Unexpected error:
@@ -109,7 +110,8 @@ class TestRequest(unittest.TestCase):
             ):
                 self._answer(200, text)
             self.assertIn("неожиданном виде", str(error.exception))
-            self.assertIn(text[:10], "\n".join(log_.output))
+            self.assertIn("unknown format", "\n".join(log_.output))
+            self.assertNotIn(text[:10], "\n".join(log_.output))
 
     def test_form_goes_via_curl_with_fields(self):
         provider = providers.find("nexara")

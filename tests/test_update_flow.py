@@ -68,8 +68,18 @@ class TestUpdates(unittest.TestCase):
         latest.assert_not_called()
         with self._latest(release("99.0.0", "\n - Заметки встречи\n- Другое")):
             self.flow.check(settings.Settings(updates_checked=today), manual=True)
-        self.assertEqual(self.checked, [today])
+        self.assertEqual(self.checked, [""])
         self.assertEqual(self.offered, [("99.0.0", "Заметки встречи")])
+
+    def test_pending_release_is_checked_again_after_restart(self):
+        config = settings.Settings()
+        with mock.patch.object(update_flow.updates, "latest", return_value=release("99.0.0")) as latest:
+            self.flow.check(config)
+            self.flow.check(config)
+            restarted = update_flow.Updates(lambda: False)
+            restarted.check(dataclasses.replace(config, updates_checked=self.checked[-1]))
+        self.assertEqual(latest.call_count, 2)
+        self.assertEqual(self.offered, [("99.0.0", "")])
 
     def test_what_a_manual_check_tells(self):
         """Without a newer release, or without an answer, a check from the tray menu says so; by itself it is
@@ -85,7 +95,7 @@ class TestUpdates(unittest.TestCase):
                     self.flow.check(settings.Settings(), manual)
                 self.assertEqual(self.notices, [heading] if manual else [])
         self.assertEqual(self.offered, [])
-        self.assertEqual(len(self.checked), 4)  # the failed requests do not count as a check
+        self.assertEqual(len(self.checked), 3)  # the failed requests do not count as a check
 
     def test_install_not_during_work_and_only_in_the_build(self):
         self.busy = True

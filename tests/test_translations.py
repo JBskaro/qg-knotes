@@ -50,6 +50,13 @@ def code_lines(files: list[pathlib.Path] | None = None) -> tuple[set[str], list[
     found |= {
         m[field] for m in models_ if not m.get("служебная") for field in ("название", "пояснение") if m.get(field)
     }
+    presets = json.loads((ROOT / "providers.json").read_text(encoding="utf-8"))
+    found |= {
+        provider["название"]
+        for group in presets.values()
+        for provider in group
+        if CYRILLIC.search(provider["название"])
+    }
     return found, errors
 
 

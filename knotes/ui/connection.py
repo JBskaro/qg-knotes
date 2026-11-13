@@ -57,14 +57,6 @@ KEY = language.tr_key(
     "Ключ доступа к сервису. Хранится в диспетчере учетных данных Windows, не в файле. Ключ привязан "
     "к адресу: у распознавания и протоколов на одном сервере он общий."
 )
-# Russian preset names from providers.json: into the translation dictionary, on screen as tr(name)
-PRESET_NAMES = (
-    language.tr_key("Nexara (Россия)"),
-    language.tr_key("Свой сервер (OpenAI API)"),
-    language.tr_key("Ollama на своем сервере"),
-    language.tr_key("LM Studio на этом компьютере"),
-    language.tr_key("На этом компьютере"),
-)
 SEPARATOR = "  ·  "  # between the model name and its id in the list
 NOT_A_LIST = (KeyError, TypeError, AttributeError)  # what a model list of another form gives when read
 log = logging.getLogger(__name__)
