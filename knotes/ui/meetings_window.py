@@ -49,6 +49,7 @@ from knotes.ui import tour
 from knotes.ui import style
 from knotes.ui.meeting_row import MeetingRow
 from knotes.ui.meetings_list import DAY_ROLE, MeetingsList
+from knotes.ui.page_motion import fade_in
 from knotes.ui.project_page import ProjectPage
 from knotes.ui.projects_panel import ProjectsPanel, looks_menu, minutes_menu
 from knotes.ui.sidebar import STRIP_WIDTH, SidebarPanel
@@ -282,6 +283,7 @@ class MeetingsWindow(QWidget):
         self._apply_columns()
         self.setWindowTitle(f"{heading} - {style.NAME}")
         widget.setFocus()
+        fade_in(widget)
 
     def go_back(self) -> None:
         """Back to the meetings: the section page closes, the list and the meeting are on the right again."""
@@ -292,6 +294,7 @@ class MeetingsWindow(QWidget):
         self.setWindowTitle(self._heading)
         if covered:
             self.in_sight.emit()
+            fade_in(self._details_layer)
 
     def list_in_sight(self) -> bool:
         """The list is worth rereading: the window is open, not minimized, no section page covers the list."""
@@ -333,6 +336,7 @@ class MeetingsWindow(QWidget):
         self._heading = f"{heading} - {style.NAME}"
         self.setWindowTitle(self._heading)
         self._highlight(getattr(widget, "folder", None))
+        fade_in(widget)
         return True
 
     def close_meeting(self) -> bool:
@@ -521,6 +525,8 @@ class MeetingsWindow(QWidget):
             self.search.setPlaceholderText(self._meetings_hint())
         self._show_items(always=True)
         self._show_project_page(project)
+        if self.page is None and self.meeting is None:
+            fade_in(self.details.currentWidget())
 
     def _meetings_hint(self) -> str:
         return (

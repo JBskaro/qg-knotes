@@ -17,6 +17,7 @@ from knotes import settings
 from knotes.language import tr
 from knotes.ui import style, tour
 from knotes.ui.connection import ConnectionBlock
+from knotes.ui.page_motion import fade_in
 from knotes.ui.settings_data import SECTIONS
 from knotes.ui.settings_form import Editor
 from knotes.ui.settings_meetings import MeetingsPage
@@ -73,6 +74,7 @@ class SettingsWindow(QWidget):
             self.editor.icons.append((QListWidgetItem(tr(SECTIONS[code]), self.sections), sign))
             self.pages.addWidget(page)
         self.sections.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.pages.currentChanged.connect(self._fade_section)
         self.sections.setCurrentRow(0)
         self._build()
         self.repaint_theme()
@@ -80,6 +82,10 @@ class SettingsWindow(QWidget):
     @property
     def settings(self) -> settings.Settings:
         return self.editor.settings
+
+    def _fade_section(self, index: int) -> None:
+        if index >= 0:
+            fade_in(self.pages.widget(index))
 
     def _build(self) -> None:
         middle = QHBoxLayout()  # sections on the window background, section settings as a card

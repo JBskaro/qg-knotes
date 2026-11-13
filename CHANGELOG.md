@@ -3,6 +3,7 @@
 ## 0.22.4 - 2026-11-13
 
 - Restore recording prompts for desktop Teams when Windows reports an active microphone session without updating the microphone access registry.
+- Add a short fade when navigating between pages and meeting tabs, following the Windows animation setting.
 
 ## 0.22.3 - 2026-11-13
 

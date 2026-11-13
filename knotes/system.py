@@ -215,6 +215,12 @@ def custom_exe() -> str:
     return sys.executable
 
 
+def client_animations_enabled() -> bool:
+    """Windows Accessibility > Visual effects > Animation effects."""
+    enabled = wintypes.BOOL()
+    return bool(ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(enabled), 0) and enabled.value)
+
+
 def process_path(pid: int) -> str:
     """Full path of the process program; empty if Windows does not give it (no such process, another user's)."""
     process = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION

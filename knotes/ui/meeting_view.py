@@ -40,6 +40,7 @@ from knotes.export import participant_caption
 from knotes.ui import export_dialog, style
 from knotes.ui.notepad import Notepad
 from knotes.ui.minutes_view import MinutesView
+from knotes.ui.page_motion import fade_in
 from knotes.ui.transcript_scroll import TranscriptScroll
 from knotes.ui.video_view import VideoView
 from knotes.player import Player
@@ -871,11 +872,15 @@ class MeetingView(QWidget):
             self.notepad.reload_from_disk()
         if name == TRANSCRIPT:
             self._build_transcript()
-        self.contents_.setCurrentWidget(self._pages[name])
+        page = self._pages[name]
+        changed = self.contents_.currentWidget() is not page
+        self.contents_.setCurrentWidget(page)
         self.tabs.select(name)
         self.setFocusProxy({TRANSCRIPT: self.scroll_area, NOTES: self.notepad.editor}.get(name, self.minutes))
         if self.contents_.isVisible():
             self.setFocus()  # arrows and the wheel scroll the open tab
+        if changed:
+            fade_in(page)
         self.tab_shown.emit(name)
 
     def switch_tab(self) -> None:
