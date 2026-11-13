@@ -64,6 +64,7 @@ MEETING_WIDTH = 560  # a comfortable width of the open meeting: below it the sec
 
 class MeetingsWindow(QWidget):
     start_recording = Signal()
+    update_requested = Signal()
     transcribe = Signal(list)  # list[pathlib.Path] - recording files
     recognize = Signal(list)  # list[pathlib.Path] - meetings from the list (folders or files)
     open_meeting = Signal(pathlib.Path)
@@ -101,13 +102,7 @@ class MeetingsWindow(QWidget):
         self.recording = QPushButton()
         self.recording.clicked.connect(self.start_recording)
         self.set_recording(False)
-        self.search = style.ClearableLine()
-        self.search.setPlaceholderText(tr("Search all meetings  Ctrl+F"))
-        self.search.setClearButtonEnabled(True)
-        self.search.addAction(style.icon(style.SEARCH, "#888780"), QLineEdit.ActionPosition.LeadingPosition)
-        self._search_delay = QTimer(self, singleShot=True, interval=300)
-        self._search_delay.timeout.connect(lambda: self._show_items(always=True))
-        self.search.textChanged.connect(self._search_changed)
+        self._build_search_bar()
         self._meetings_query = ""  # kept while a section with its own search (the help) has the search box
         self.list_ = MeetingsList(self._row_widget)
         self.list_.setObjectName("встречи")
@@ -131,6 +126,18 @@ class MeetingsWindow(QWidget):
         self._shortcuts()
         self.repaint_theme()
 
+    def _build_search_bar(self) -> None:
+        self.update_button = QPushButton(tr("Update"))
+        self.update_button.hide()
+        self.update_button.clicked.connect(self.update_requested)
+        self.search = style.ClearableLine()
+        self.search.setPlaceholderText(tr("Search all meetings  Ctrl+F"))
+        self.search.setClearButtonEnabled(True)
+        self.search.addAction(style.icon(style.SEARCH, "#888780"), QLineEdit.ActionPosition.LeadingPosition)
+        self._search_delay = QTimer(self, singleShot=True, interval=300)
+        self._search_delay.timeout.connect(lambda: self._show_items(always=True))
+        self.search.textChanged.connect(self._search_changed)
+
     def _build(self) -> None:
         """Recording and search on top; below, three columns on one splitter: sections with projects, meetings and
         the open meeting. A section (tasks, summary, settings, help) opens in place of the list and the meeting. The
@@ -139,6 +146,7 @@ class MeetingsWindow(QWidget):
         top.setSpacing(8)
         top.addWidget(self.recording)
         top.addWidget(self.search, 1)
+        top.addWidget(self.update_button)
         self.projects_column = SidebarPanel(self.panel)
         self.projects_column.selected.connect(self._section_chosen)
         self.projects_column.new_project.connect(self._new_project)
@@ -959,6 +967,10 @@ class MeetingsWindow(QWidget):
     def _section_place(self, code: str) -> QRect | None:
         kind, item = self.projects_column.place(code)
         return tour.area_of(kind, self, item)
+
+    def show_update(self, version: str) -> None:
+        self.update_button.setToolTip(tr("Version {version} is out", version=version))
+        self.update_button.setVisible(bool(version))
 
     def set_recording(self, running: bool, seconds: float = 0) -> None:
         """Record button: blue "Start recording" or red "Stop 12:34"."""

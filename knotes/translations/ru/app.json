@@ -128,6 +128,7 @@
  "The program's releases on GitHub are not available.": "Выпуски программы на GitHub недоступны.",
  "Version {version} is out": "Вышла версия {version}",
  "Update": "Обновить",
+ "Install version {version} and restart the app?": "Установить версию {version} и перезапустить программу?",
  "Cannot install the update": "Обновление не поставить",
  "The update did not download": "Обновление не скачалось",
  "The update was not installed: the program files are in use. The previous version is in place, start it and update again.": "Обновление не установилось: файлы программы заняты. Прежняя версия на месте, запустите ее и повторите обновление.",

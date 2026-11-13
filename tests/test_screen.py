@@ -17,6 +17,7 @@ import numpy as np
 
 from knotes import recording, screen, system
 from knotes import recognition
+from tests.audio_fixture import write_flac
 
 PRIMARY_MONITOR = screen.Monitor(r"\\.\DISPLAY1", 0, 0, 1920, 1080, True, handle=101)
 SECOND = screen.Monitor(r"\\.\DISPLAY2", 1920, -1080, 3840, 2160, handle=202)
@@ -242,7 +243,7 @@ class TestAssembly(unittest.TestCase):
             0.3 * np.sin(np.arange(4 * recognition.SAMPLE_RATE) / recognition.SAMPLE_RATE * 2 * np.pi * 440)
         ).astype(np.float32)
         for track in ("микрофон", "собеседники"):
-            recognition.write_flac(tone, self.folder / f"{track}.flac")
+            write_flac(tone, self.folder / f"{track}.flac")
         screen.assemble(self.folder)
         video = self.folder / screen.VIDEO_FILE
         duration, info = self._duration(video)

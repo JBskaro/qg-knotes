@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 from knotes import local_engine, models, providers
 from knotes import settings
 from knotes import recognition
+from tests.audio_fixture import write_flac
 
 program = QApplication.instance() or QApplication([])
 SR = recognition.SAMPLE_RATE
@@ -47,7 +48,7 @@ class TestLocalRecognition(unittest.TestCase):
         self.meeting.mkdir()
         audio = np.zeros(4 * SR, np.float32)
         audio[: 2 * SR] = np.random.default_rng(0).uniform(-0.5, 0.5, 2 * SR)
-        recognition.write_flac(audio, self.meeting / "собеседники.flac")
+        write_flac(audio, self.meeting / "собеседники.flac")
         self.params = recognition.Params(providers.find(providers.LOCAL), "", models_folder=self.models)
         # tiny catalog file sizes so that the "downloaded" model matches the marker
         self.catalog = [
@@ -109,7 +110,7 @@ class TestLocalRecognition(unittest.TestCase):
         for model in self.catalog:
             _download(self.models, model)
         noise = np.random.default_rng(1).uniform(-0.5, 0.5, 4 * SR).astype(np.float32)
-        recognition.write_flac(noise, self.meeting / "микрофон.flac")
+        write_flac(noise, self.meeting / "микрофон.flac")
         with mock.patch.object(local_engine, "recognize_in_process", side_effect=self._answer) as engine:
             recognition.process(self.meeting, self.params)
         diarization = {call_.args[0].stem: call_.args[2] is not None for call_ in engine.call_args_list}

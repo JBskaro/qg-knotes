@@ -126,25 +126,6 @@ def read_mono(path: pathlib.Path) -> np.ndarray:
     return audio
 
 
-def write_flac(audio: np.ndarray, path: pathlib.Path) -> None:
-    raw_items = (np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes()
-    _ffmpeg(
-        "-y",
-        "-f",
-        "s16le",
-        "-ar",
-        str(SAMPLE_RATE),
-        "-ac",
-        "1",
-        "-i",
-        "pipe:0",
-        "-c:a",
-        "flac",
-        str(path),
-        input_=raw_items,
-    )
-
-
 def join_flac(chunks: list[tuple[int, pathlib.Path]], path: pathlib.Path) -> None:
     """Chunks (start in samples, file) into one 16 kHz mono FLAC: gaps become silence, a chunk running into the next
     one is cut at its start. ffmpeg streams them, so a 3-hour track does not sit in memory."""
@@ -162,7 +143,20 @@ def join_flac(chunks: list[tuple[int, pathlib.Path]], path: pathlib.Path) -> Non
         filters.append(f"[{number}:a]{','.join(steps)}[a{number}]")
     joined = "".join(f"[a{number}]" for number in range(len(chunks)))
     filters.append(f"{joined}concat=n={len(chunks)}:v=0:a=1[out]")
-    _ffmpeg("-y", *inputs, "-filter_complex", ";".join(filters), "-map", "[out]", "-c:a", "flac", str(path))
+    # With FFmpeg 9 the FLAC encoder otherwise takes its block size from the first frame, which can be a few samples.
+    _ffmpeg(
+        "-y",
+        *inputs,
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        "[out]",
+        "-c:a",
+        "flac",
+        "-frame_size",
+        "1152",
+        str(path),
+    )
 
 
 def to_mp3(path: pathlib.Path, start: float = 0, length: float = 0) -> bytes:
@@ -524,13 +518,22 @@ def _collect(words: dict[str, list[dict]], levels: dict[str, tuple | None]) -> l
 def folder_for_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Path:
     """The meeting folder for a ready file; a same-named file from another place gets its own numbered folder."""
     source = str(file.resolve())
-    folder, number = recordings / file.stem, 2
-    while (folder / SOURCE).exists() and (folder / SOURCE).read_text(encoding="utf-8") != source:
-        folder, number = recordings / f"{file.stem}_{number}", number + 1
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / SOURCE).write_text(source, encoding="utf-8")
     written = datetime.datetime.fromtimestamp(file.stat().st_mtime).isoformat(timespec="seconds")
-    catalog.set_(folder, started=written)  # the list then does not look for the file, maybe on a drive that is off
+    recordings.mkdir(parents=True, exist_ok=True)
+    with transcript.locked(recordings / SOURCE):
+        folder, number = recordings / file.stem, 2
+        while True:
+            marker = folder / SOURCE
+            try:
+                folder.mkdir()
+            except FileExistsError:
+                if marker.is_file() and marker.read_text(encoding="utf-8") == source:
+                    break
+                folder, number = recordings / f"{file.stem}_{number}", number + 1
+            else:
+                transcript.write_text(marker, source)
+                break
+        catalog.set_(folder, started=written)
     return folder
 
 
@@ -538,8 +541,14 @@ def from_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Path:
     """Puts a ready recording (video or audio) into <recordings>/<file name>/общая.flac; the source file stays as is."""
     folder = folder_for_file(file, recordings)
     shared_track = folder / "общая.flac"
-    if not shared_track.exists():
-        _ffmpeg("-y", "-i", str(file), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "flac", str(shared_track))
+    with transcript.locked(shared_track):
+        if not shared_track.exists():
+            working = folder / "общая.flac.tmp"
+            try:
+                _ffmpeg("-y", "-i", str(file), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "flac", str(working))
+                transcript.replace(working, shared_track)
+            finally:
+                working.unlink(missing_ok=True)
     return folder
 
 

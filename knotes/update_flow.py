@@ -27,19 +27,27 @@ class Updates(QObject):
     """busy(): a recording, a recognition or the minutes are going on now."""
 
     notice = Signal(str, str)  # heading and text of a toast
-    checked = Signal(str)  # the day of a check that got an answer: the check by itself waits for the next day
+    checked = Signal(str)  # a pending update clears the saved date so it is offered again after restart
     offered = Signal(object, str)  # a newer updates.Release and its main point: to ask whether to install it
+    current = Signal()
+    downloading = Signal(bool)
     started = Signal()  # the installer or the swap runs: the program exits for it
 
     def __init__(self, busy: Callable[[], bool]):
         super().__init__()
         self._busy = busy
+        self._downloading = False
+        self._last_checked = ""
 
     def check(self, config: settings.Settings, manual: bool = False) -> None:
         """Once a day by itself, if the settings allow it and this is the build; manual: from the tray menu, always,
         and a release that is not newer is reported too."""
         today = datetime.date.today().isoformat()
-        if not manual and (not config.check_for_updates or not updates.frozen() or config.updates_checked == today):
+        if not manual and (
+            not config.check_for_updates
+            or not updates.frozen()
+            or today in (self._last_checked, config.updates_checked)
+        ):
             return
         run_in_background(
             QThreadPool.globalInstance(), updates.latest, lambda result: self._release_arrived(result, manual, today)
@@ -51,21 +59,27 @@ class Updates(QObject):
             if manual:
                 self.notice.emit(tr("Cannot check for updates"), failures.text(result))
             return
-        self.checked.emit(today)
+        self._last_checked = today
         if result is None:
+            self.checked.emit(today)
             if manual:
                 self.notice.emit(
                     tr("Cannot check for updates"), tr("The program's releases on GitHub are not available.")
                 )
             return
         if not updates.is_newer(result.version):
+            self.checked.emit(today)
+            self.current.emit()
             if manual:
                 self.notice.emit(tr("No updates"), tr("You have the latest version {version}.", version=VERSION))
             return
+        self.checked.emit("")
         self.offered.emit(result, next((s.strip(" -*") for s in result.notes.splitlines() if s.strip(" -*")), ""))
 
     def install(self, release: updates.Release) -> None:
         """Downloads the release file and installs it; not during a recording or a recognition."""
+        if self._downloading:
+            return
         if not updates.frozen():
             self.notice.emit(tr("Cannot install the update"), tr("The program is not running from the build."))
             return
@@ -85,6 +99,8 @@ class Updates(QObject):
                 tr("Release {version} has no file for this copy of the program.", version=release.version),
             )
             return
+        self._downloading = True
+        self.downloading.emit(True)
         self.notice.emit(
             tr("Downloading the update"),
             tr("Version {version}. Once downloaded, the program restarts.", version=release.version),
@@ -92,6 +108,8 @@ class Updates(QObject):
         run_in_background(QThreadPool.globalInstance(), lambda: _prepare(file), self._update_ready)
 
     def _update_ready(self, result: object) -> None:
+        self._downloading = False
+        self.downloading.emit(False)
         if isinstance(result, Exception):
             log.warning("the update did not download: %s", result)
             self.notice.emit(tr("The update did not download"), failures.text(result))

@@ -11,6 +11,7 @@ import numpy as np
 
 from knotes import language, player, system
 from knotes import recognition
+from tests.audio_fixture import write_flac
 
 
 class Output:
@@ -46,7 +47,7 @@ class TestPlayer(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.folder = pathlib.Path(self._tmp.name)
-        recognition.write_flac(np.full(3 * recognition.SAMPLE_RATE, 0.3, np.float32), self.folder / "микрофон.flac")
+        write_flac(np.full(3 * recognition.SAMPLE_RATE, 0.3, np.float32), self.folder / "микрофон.flac")
 
     def tearDown(self):
         self._tmp.cleanup()

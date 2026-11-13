@@ -609,7 +609,7 @@ class PopupHider(QObject):
 
 
 class Toast(QWidget):
-    """A translucent dark toast over other windows: no frame, no focus, fades in and out smoothly.
+    """A translucent dark toast over other windows: no frame, no focus, fades in.
 
     Under the mouse pointer it gets more opaque, to be easy to read and click.
     """

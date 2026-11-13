@@ -23,8 +23,8 @@ the DirectML-enabled sherpa-onnx binary is built from the pinned 2.0.0 source in
 | jaraco.classes, jaraco.context, jaraco.functools | 3.4.0, 6.1.2, 4.6.0 | MIT | https://github.com/jaraco |
 | more-itertools | 11.2.1 | MIT | https://github.com/more-itertools/more-itertools |
 | pywin32-ctypes | 0.2.3 | BSD-3-Clause | https://github.com/enthought/pywin32-ctypes |
-| imageio-ffmpeg | 0.6.0 | BSD-2-Clause | https://github.com/imageio/imageio-ffmpeg |
-| FFmpeg 7.1 "essentials" build by gyan.dev (shipped by imageio-ffmpeg) | 7.1 | GPL-3.0-or-later (built with `--enable-gpl --enable-version3`) | https://ffmpeg.org, https://www.gyan.dev/ffmpeg/builds/ |
+| imageio-ffmpeg | 0.8.1 | BSD-2-Clause | https://github.com/imageio/imageio-ffmpeg |
+| FFmpeg 9.0.2 "essentials" build by gyan.dev (shipped by imageio-ffmpeg) | 9.0.2 | GPL-3.0-or-later (built with `--enable-gpl --enable-version3`) | https://ffmpeg.org, https://www.gyan.dev/ffmpeg/builds/ |
 | PyInstaller bootloader | 6.22.3 | GPL-2.0-or-later with the bootloader exception | https://pyinstaller.org |
 
 The Windows build carries these texts in `_internal\licenses`: the GPL-3.0 of the program, this file, the
@@ -32,7 +32,7 @@ LGPL-3.0 for Qt and PySide6, and the licenses of sherpa-onnx, ONNX Runtime and D
 
 ### FFmpeg source code
 
-The FFmpeg binary is a GPL build. Its corresponding source code is the FFmpeg 7.1 release from https://ffmpeg.org
+The FFmpeg binary is a GPL build. Its corresponding source code is the FFmpeg 9.0.2 release from https://ffmpeg.org
 with the configuration printed by `ffmpeg -version`; gyan.dev publishes the build and the versions of the libraries it
 links. On request, the maintainers of QG Knotes provide the same source code for at least three years after the
 release that shipped it.

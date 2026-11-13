@@ -102,17 +102,17 @@ class TestBoard(unittest.TestCase):
 
     def test_state_kept_by_item_text(self):
         first = tasks.tasks(self.recordings)[0]
-        tasks.set_state(self.recordings, first.key, tasks.IN_PROGRESS)
+        tasks.edit(self.recordings, first.key, tasks.Edit(status=tasks.IN_PROGRESS))
         self.assertEqual(tasks.tasks(self.recordings)[0].status, tasks.IN_PROGRESS)
         (self.meeting / minutes.FILE).write_text(
             MINUTES.replace("1. Доделать", "2. Доделать").replace("2. Проверить", "1. Проверить"), encoding="utf-8"
         )
         by_text = {z.text: z.status for z in tasks.tasks(self.recordings)}  # the minutes were written again
         self.assertEqual(by_text["Доделать загрузку."], tasks.IN_PROGRESS)
-        tasks.set_state(self.recordings, first.key, tasks.DONE)
+        tasks.edit(self.recordings, first.key, tasks.Edit(status=tasks.DONE))
         self.assertFalse(tasks.tasks(self.recordings)[0].overdue(TODAY))  # a done task is not overdue
         with self.assertRaises(ValueError):
-            tasks.set_state(self.recordings, first.key, "потом")
+            tasks.edit(self.recordings, first.key, tasks.Edit(status="потом"))
 
     def test_minutes_item_edit_stored_apart_minutes_unchanged(self):
         first = tasks.tasks(self.recordings)[0]
@@ -213,7 +213,7 @@ class TestBoard(unittest.TestCase):
             (custom.origin.folder, custom.origin.title, custom.origin.date, custom.who, custom.due),
             (None, tasks.MANUAL, datetime.date.today(), "Дмитрий", datetime.date(2026, 10, 25)),
         )
-        tasks.set_state(self.recordings, custom.key, tasks.DONE)
+        tasks.edit(self.recordings, custom.key, tasks.Edit(status=tasks.DONE))
         self.assertEqual([z.status for z in tasks.tasks(self.recordings, "Склад") if z.key == custom.key], [tasks.DONE])
         tasks.edit(
             self.recordings,
@@ -291,8 +291,8 @@ class TestBoard(unittest.TestCase):
 
         self.assertEqual(in_progress(), ["Новая", "Своя без срока", "Как пересчитывать коробки."])  # no place: on top
         tasks.add(self.recordings, "В конец", edit_item=tasks.Edit(status=tasks.IN_PROGRESS, order=5))
-        tasks.set_state(self.recordings, question, tasks.DONE)
-        tasks.set_state(self.recordings, question, tasks.IN_PROGRESS)  # came back: no place, to the top
+        tasks.edit(self.recordings, question, tasks.Edit(status=tasks.DONE))
+        tasks.edit(self.recordings, question, tasks.Edit(status=tasks.IN_PROGRESS))  # came back: no place, to the top
         self.assertEqual(in_progress(), ["Новая", "Как пересчитывать коробки.", "Своя без срока", "В конец"])
         with self.assertRaises(ValueError):
             tasks.reorder(self.recordings, "потом", [custom.key])
@@ -464,8 +464,10 @@ class TestColumns(TestBoard):
         self.assertEqual((board[first.key].column, board[first.key].status), (review.key, tasks.IN_PROGRESS))
         self.assertTrue(board[first.key].opened)
         self.assertEqual(self._file()["состояния"][first.key], tasks.IN_PROGRESS)  # older versions read the base
-        tasks.set_state(self.recordings, second.key, tasks.DONE)  # the assistant sets a state, not a column
-        tasks.set_state(self.recordings, second.key, tasks.IN_PROGRESS)
+        tasks.edit(
+            self.recordings, second.key, tasks.Edit(status=tasks.DONE)
+        )  # the assistant sets a state, not a column
+        tasks.edit(self.recordings, second.key, tasks.Edit(status=tasks.IN_PROGRESS))
         self.assertEqual(self._by_text()[second.text].column, tasks.IN_PROGRESS)  # the first column of the state
         projects.order_columns(self.recordings, "Склад", [tasks.TODO, review.key, tasks.IN_PROGRESS, tasks.DONE])
         self.assertEqual(self._by_text()[first.text].column, review.key)  # the stored column stays
@@ -513,7 +515,7 @@ class TestColumns(TestBoard):
         review = projects.add_column(self.recordings, "Склад", "На проверке", tasks.IN_PROGRESS)
         first, second, third = tasks.tasks(self.recordings)
         tasks.reorder(self.recordings, tasks.IN_PROGRESS, [first.key], review.key)
-        tasks.set_state(self.recordings, second.key, tasks.IN_PROGRESS)
+        tasks.edit(self.recordings, second.key, tasks.Edit(status=tasks.IN_PROGRESS))
         projects.rename_column(self.recordings, "Склад", tasks.TODO, "Очередь")
         self.assertEqual(
             tasks.column_marks(self.recordings, tasks.tasks(self.recordings)),

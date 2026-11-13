@@ -104,6 +104,55 @@ class TestPrivacyMinutes(unittest.TestCase):
         one = ai_tools.get_transcript(self.folder.name, speaker="[ЧЕЛОВЕК_1]")  # the assistant knows only the label
         self.assertEqual(one["текст"], "[00:10] [ЧЕЛОВЕК_1]: Мой [ТЕЛЕФОН_1], почта [EMAIL_1].")
 
+    def test_mcp_masks_meeting_content_in_every_read_view(self):
+        self.config.hide_names = True
+        catalog.set_(self.folder, название=f"Анна Смирнова {MAIL}", проект="Проверка")
+        (self.folder / minutes.FILE).write_text(f"# Итоги\n\nАнна Смирнова {MAIL} {PHONE}\n", encoding="utf-8")
+        notes.add(self.folder, 12, f"перезвонить {PHONE}")
+        meeting = self.folder.name
+        search = ai_tools.search_meetings(MAIL)
+        answers = (
+            ai_tools.list_meetings(),
+            search,
+            ai_tools.get_protocol(meeting),
+            ai_tools.get_meeting_notes(meeting),
+            ai_tools.get_protocol_task(meeting),
+        )
+        for answer in answers:
+            with self.subTest(answer_keys=answer.keys()):
+                text = json.dumps(answer, ensure_ascii=False)
+                self.assertIn(meeting, text)
+                for private in (MAIL, PHONE, "Анна"):
+                    self.assertNotIn(private, text)
+        self.assertIn("[EMAIL_1]", search["найдено"][0]["отрывки"][0])
+
+    def test_mcp_identifiers_do_not_expose_names_or_task_text(self):
+        renamed = self.folder.with_name(f"recording-{MAIL}")
+        self.folder.rename(renamed)
+        (renamed / minutes.FILE).write_text(f"## Задачи\n\n1. Написать на {MAIL}\n", encoding="utf-8")
+        meeting = ai_tools.list_meetings()["встречи"][0]["встреча"]
+        self.assertTrue(meeting.startswith("meeting-"))
+        self.assertEqual(ai_tools.get_transcript(meeting)["встреча"], meeting)
+        task = ai_tools.list_open_items()["пункты"][0]
+        self.assertNotIn(MAIL, json.dumps(task, ensure_ascii=False))
+        self.assertTrue(task["ключ"].startswith("task-"))
+        result = ai_tools.set_task_status(task["ключ"], "готово")
+        self.assertEqual((result["ключ"], result["состояние"]), (task["ключ"], "готово"))
+
+    def test_task_and_project_notes_also_hide_personal_data(self):
+        from knotes import projects
+
+        project = "Проверка"
+        self.config.hide_names = True
+        catalog.set_(self.folder, проект=project)
+        projects.set_(self.recordings, project, projects.ProjectNotes(f"Анна Смирнова {MAIL}", True))
+        task = ai_tools.add_task(f"Связаться по {MAIL}", "Анна Смирнова", project=project)
+        self.assertEqual(ai_tools.set_task_status(task["ключ"], "в работе")["ключ"], task["ключ"])
+        for answer in (task, ai_tools.list_open_items(project), ai_tools.get_project_notes(project)):
+            text = json.dumps(answer, ensure_ascii=False)
+            self.assertNotIn(MAIL, text)
+            self.assertNotIn("Анна", text)
+
     def test_assistant_with_switch_off_gets_text_as_is(self):
         self.config = settings.Settings(recordings_folder=str(self.recordings), hide_personal_data=False)
         self.assertIn(PHONE, ai_tools.get_transcript(self.folder.name)["текст"])

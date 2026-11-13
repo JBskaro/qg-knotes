@@ -9,6 +9,7 @@ import tempfile
 import time
 import tracemalloc
 import unittest
+from unittest import mock
 import wave
 
 import numpy as np
@@ -163,6 +164,42 @@ class TestChunks(unittest.TestCase):
 
 
 class TestReadyRecording(unittest.TestCase):
+    def test_import_does_not_reuse_a_recorded_meeting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            existing = root / "recordings" / "2026-10-22_10-00"
+            existing.mkdir(parents=True)
+            (existing / "микрофон.flac").write_bytes(b"recorded")
+            source = root / f"{existing.name}.mp4"
+            source.touch()
+            imported = recognition.folder_for_file(source, existing.parent)
+            self.assertEqual(imported.name, existing.name + "_2")
+            self.assertEqual(recognition.folder_for_file(source, existing.parent), imported)
+            self.assertFalse((existing / recognition.SOURCE).exists())
+            self.assertEqual((existing / "микрофон.flac").read_bytes(), b"recorded")
+
+    def test_interrupted_import_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            source = root / "video.mp4"
+            source.touch()
+            recordings = root / "recordings"
+
+            def interrupted(*arguments):
+                pathlib.Path(arguments[-1]).write_bytes(b"incomplete")
+                raise OSError("interrupted")
+
+            with mock.patch.object(recognition, "_ffmpeg", side_effect=interrupted), self.assertRaises(OSError):
+                recognition.from_file(source, recordings)
+            folder = recordings / "video"
+            self.assertFalse((folder / "общая.flac").exists())
+            self.assertFalse((folder / "общая.flac.tmp").exists())
+            with mock.patch.object(
+                recognition, "_ffmpeg", side_effect=lambda *args: pathlib.Path(args[-1]).write_bytes(b"audio")
+            ):
+                self.assertEqual(recognition.from_file(source, recordings), folder)
+            self.assertEqual((folder / "общая.flac").read_bytes(), b"audio")
+
     def test_audio_from_video_to_shared_track(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = pathlib.Path(tmp)

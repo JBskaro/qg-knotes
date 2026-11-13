@@ -88,6 +88,7 @@ class App(QObject):
             Host(lambda: self.settings, self.notify, self._shortcuts, self._projects, self._notes_saved), self.jobs.busy
         )
         self.updates = update_flow.Updates(self._busy)
+        self._available_update: tuple[updates.Release, str] | None = None
         self.key_seq = Hotkey(int(self.window.winId()), 1, self.session.toggle)
         self.mark_hotkey = Hotkey(int(self.window.winId()), 2, self.session.mark)
         self.notes_hotkey = Hotkey(int(self.window.winId()), 3, self.session.note)
@@ -167,6 +168,9 @@ class App(QObject):
         self.updates.notice.connect(self.notify)
         self.updates.checked.connect(self._updates_checked)
         self.updates.offered.connect(self._offer_update)
+        self.updates.current.connect(self._clear_update)
+        self.window.update_requested.connect(self._confirm_update)
+        self.updates.downloading.connect(lambda active: self.window.update_button.setEnabled(not active))
         self.updates.started.connect(self.quit_app)
 
     def _timer(self, ms: int, action: object) -> QTimer:
@@ -240,17 +244,46 @@ class App(QObject):
         self.updates.check(self.settings, manual)
 
     def _updates_checked(self, today: str) -> None:
-        self.settings = dataclasses.replace(self.settings, updates_checked=today)
-        settings.save(self.settings)
+        if self.settings.updates_checked != today:
+            self.settings = dataclasses.replace(self.settings, updates_checked=today)
+            settings.save(self.settings)
 
     def _offer_update(self, release: updates.Release, main_point: str) -> None:
+        self._available_update = (release, main_point)
+        self.window.show_update(release.version)
         self._notify_with_buttons(
             tr("Version {version} is out", version=release.version),
             main_point,
             [("обновить", tr("Update")), ("позже", tr("Later"))],
-            lambda answer: answer == "обновить" and self.updates.install(release),
+            lambda answer: answer == "обновить" and self._install_available_update(),
             WAIT_ANSWER_S,
         )
+
+    def _clear_update(self) -> None:
+        self._available_update = None
+        self.window.show_update("")
+
+    def _confirm_update(self) -> None:
+        if self._available_update is None:
+            return
+        release, main_point = self._available_update
+        box = QMessageBox(self.window)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setWindowTitle(tr("Version {version} is out", version=release.version))
+        box.setText(tr("Install version {version} and restart the app?", version=release.version))
+        if main_point:
+            box.setInformativeText(main_point)
+        install = box.addButton(tr("Update"), QMessageBox.ButtonRole.AcceptRole)
+        later = box.addButton(tr("Later"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(later)
+        box.exec()
+        if box.clickedButton() is install and self._available_update == (release, main_point):
+            self.updates.install(release)
+
+    def _install_available_update(self) -> None:
+        if self._available_update is not None:
+            self.updates.install(self._available_update[0])
 
     # --- first run ----------------------------------------------------------------------------------------------
 
