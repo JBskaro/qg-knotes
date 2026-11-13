@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.5 - 2026-11-13
+
+- Fix a crash after startup when checking the desktop Teams microphone session.
+
 ## 0.22.4 - 2026-11-13
 
 - Restore recording prompts for desktop Teams when Windows reports an active microphone session without updating the microphone access registry.

@@ -107,6 +107,19 @@ class TestDetector(unittest.TestCase):
             self.assertEqual(watcher.step(detector.read(apps), detector.LONGER_S, False).suggest, set(apps))
             capture.assert_called_with(device)
 
+    def test_capture_sessions_acquire_a_separate_com_reference(self):
+        device = mock.Mock()
+        interface = device.Activate.return_value
+        manager = interface.QueryInterface.return_value
+        sessions = manager.GetSessionEnumerator.return_value
+        sessions.GetCount.return_value = 1
+        control = sessions.GetSession.return_value.QueryInterface.return_value
+        control.GetState.return_value = detector.AudioSessionState.Active
+        control.GetProcessId.return_value = 42
+
+        self.assertEqual(detector._capture_processes(device), {42})
+        interface.QueryInterface.assert_called_once_with(detector.IAudioSessionManager2)
+
     def test_decline_lasts_until_meeting_end(self):
         """Muted: the program released the microphone, unmuted: took it again; it is the same meeting, do not offer
         a second time. A new meeting comes after a long break."""

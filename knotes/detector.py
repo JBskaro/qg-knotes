@@ -12,7 +12,6 @@ the meeting does not end because of it, and a declined recording stays declined 
 import dataclasses
 import pathlib
 import winreg
-from ctypes import POINTER, cast
 
 from comtypes import CLSCTX_ALL, COMError
 from pycaw.constants import DEVICE_STATE, AudioSessionState, EDataFlow
@@ -66,7 +65,9 @@ def _read(path: str) -> dict[str, bool]:
 
 def _capture_processes(device: object) -> set[int]:
     interface = device.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
-    manager = cast(interface, POINTER(IAudioSessionManager2))
+    # QueryInterface gives the manager its own COM reference. A ctypes cast
+    # would make both wrappers release the same reference.
+    manager = interface.QueryInterface(IAudioSessionManager2)
     sessions = manager.GetSessionEnumerator()
     active = set()
     for index in range(sessions.GetCount()):
