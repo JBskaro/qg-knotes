@@ -63,6 +63,7 @@ RIGHT = ""
 STAR, PAUSE, LATER_SPAN, STOP = "", "", "", ""
 SEARCH, SETTINGS, HELP, MORE, REFRESH, EYE = "", "", "", "", "", ""
 FILTER_FILES, FOLDER, DOCUMENT, SEND, UPLOAD = "", "", "", "", ""
+DOWNLOAD = "\ue896"
 PLUS, CLOSE, BOOK, VIDEO = "", "", "", ""
 CHART = ""
 ALL_PROJECTS, COLLAPSE_PANEL, EXPAND_PANEL = "\ue8f1", "\ue89f", "\ue8a0"  # sections column
@@ -378,7 +379,8 @@ def projects_menu(
     select: Callable[[str | None], object],
 ) -> QMenu:
     """Project filter menu: "All projects" (None), projects with their icons, "No project" (""); current is checked."""
-    menu, group = QMenu(parent_), QActionGroup(parent_)
+    menu = QMenu(parent_)
+    group = QActionGroup(menu)
     color = parent_.palette().color(QPalette.ColorRole.WindowText)
     for row_label, project, sign in (
         (tr("All projects"), None, icon(VIDEO, color)),
@@ -527,24 +529,33 @@ QLabel#ошибка_текст {{ color: {"#F09595" if dark_mode else "#A32D2D"}
 QFrame#бросить {{ border: 1px dashed {frame_box}; border-radius: 6px; }}
 QFrame#метка {{ border: none; border-top: 1px dashed {frame_box}; border-bottom: 1px dashed {frame_box}; }}
 QFrame#разделитель {{ border: none; border-left: 1px solid {frame_box}; }}
-QListWidget#встречи, QListWidget#разделы {{ border: none; background: transparent; outline: none; }}
+QListWidget#встречи, QListWidget#разделы, QListWidget#проекты {{
+    border: none; background: transparent; outline: none; }}
 QListWidget#встречи::item {{ border-bottom: 1px solid {frame_box}; }}
 QListWidget#встречи::item:hover {{ background: {hover}; }}
 QListWidget#встречи::item:selected {{ background: {choice}; }}
-QListWidget#разделы::item {{ padding: 2px 10px; border-radius: 6px; margin: 1px 0; }}
-QListWidget#разделы::item:hover {{ background: {hover}; }}
+QListWidget#разделы::item, QListWidget#проекты::item {{ padding: 2px 10px; border-radius: 6px; margin: 1px 0; }}
+QListWidget#разделы::item:hover, QListWidget#проекты::item:hover {{ background: {hover}; }}
 QListWidget#разделы::item:selected {{ background: {choice}; color: {choice_text}; }}
+QListWidget#проекты::item:selected {{ background: {frame_box}; }}
 QToolButton#значок {{ font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 15px; border: none;
                       border-radius: 4px; padding: 6px; min-width: 20px; }}
 QToolButton#значок:hover {{ background: {hover}; }}
 QToolButton#значок:checked {{ background: {choice}; color: {choice_text}; }}
 QToolButton#значок::menu-indicator {{ image: none; width: 0; }}
+QToolButton[formatMenu="true"] {{ padding-right: 7px; }}
+QToolButton[formatMenu="true"]::menu-indicator {{ image: none; width: 0; }}
 QToolButton#буквы {{ border: none; border-radius: 4px; padding: 5px 8px; font-size: 13px; }}
 QToolButton#буквы:hover {{ background: {hover}; }}
+QToolButton#буквы:checked {{ background: {choice}; color: {choice_text}; }}
 QLineEdit#название_встречи {{ background: transparent; border: none; border-bottom: 1px solid transparent; }}
 QLineEdit#название_встречи:hover, QLineEdit#название_встречи:focus {{ border-bottom: 1px solid {frame_box}; }}
 QPushButton#главная {{ background: {a}; color: white; border: none; border-radius: 4px; padding: 7px 16px; }}
 QPushButton#главная:hover {{ background: {DARKER}; }}
+QPushButton#кнопка_блокнота {{ border: 1px solid {frame_box}; background: transparent;
+    border-radius: 4px; padding: 4px 8px; }}
+QPushButton#кнопка_блокнота:hover {{ background: {hover}; }}
+QPushButton#кнопка_блокнота:checked {{ background: {choice}; color: {choice_text}; }}
 QPushButton#назад {{ border: none; background: transparent; color: {secondary}; padding: 2px 6px; }}
 QPushButton#назад:hover {{ color: {a}; }}
 QPushButton#стоп {{ background: #A32D2D; color: white; border: none; border-radius: 4px; padding: 7px 16px; }}

@@ -88,7 +88,7 @@ class App(QObject):
             Host(lambda: self.settings, self.notify, self._shortcuts, self._projects, self._notes_saved), self.jobs.busy
         )
         self.updates = update_flow.Updates(self._busy)
-        self._available_update: tuple[updates.Release, str] | None = None
+        self._available_update: updates.Release | None = None
         self.key_seq = Hotkey(int(self.window.winId()), 1, self.session.toggle)
         self.mark_hotkey = Hotkey(int(self.window.winId()), 2, self.session.mark)
         self.notes_hotkey = Hotkey(int(self.window.winId()), 3, self.session.note)
@@ -130,9 +130,11 @@ class App(QObject):
         self.window.open_meeting.connect(self.open_meeting)
         self.window.config.connect(self.open_settings)
         self.window.help_page.connect(self.open_help)
+        self.window.notebook.connect(self.open_notebook)
         self.window.summary.connect(self.open_summary)
         self.window.tasks.connect(self.open_tasks)
         self.window.open_notes.connect(self._open_notes)
+        self.window.find_notes.connect(self._find_notes)
         self.window.notice.connect(self.notify)
         self.window.projects_changed.connect(
             lambda projects: self.apply_settings(dataclasses.replace(self.settings, projects=projects))
@@ -169,7 +171,7 @@ class App(QObject):
         self.updates.checked.connect(self._updates_checked)
         self.updates.offered.connect(self._offer_update)
         self.updates.current.connect(self._clear_update)
-        self.window.update_requested.connect(self._confirm_update)
+        self.window.update_requested.connect(self._install_available_update)
         self.updates.downloading.connect(lambda active: self.window.update_button.setEnabled(not active))
         self.updates.started.connect(self.quit_app)
 
@@ -248,42 +250,19 @@ class App(QObject):
             self.settings = dataclasses.replace(self.settings, updates_checked=today)
             settings.save(self.settings)
 
-    def _offer_update(self, release: updates.Release, main_point: str) -> None:
-        self._available_update = (release, main_point)
+    def _offer_update(self, release: updates.Release, manual: bool) -> None:
+        self._available_update = release
         self.window.show_update(release.version)
-        self._notify_with_buttons(
-            tr("Version {version} is out", version=release.version),
-            main_point,
-            [("обновить", tr("Update")), ("позже", tr("Later"))],
-            lambda answer: answer == "обновить" and self._install_available_update(),
-            WAIT_ANSWER_S,
-        )
+        if manual:
+            self.show_window()
 
     def _clear_update(self) -> None:
         self._available_update = None
         self.window.show_update("")
 
-    def _confirm_update(self) -> None:
-        if self._available_update is None:
-            return
-        release, main_point = self._available_update
-        box = QMessageBox(self.window)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setTextFormat(Qt.TextFormat.PlainText)
-        box.setWindowTitle(tr("Version {version} is out", version=release.version))
-        box.setText(tr("Install version {version} and restart the app?", version=release.version))
-        if main_point:
-            box.setInformativeText(main_point)
-        install = box.addButton(tr("Update"), QMessageBox.ButtonRole.AcceptRole)
-        later = box.addButton(tr("Later"), QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(later)
-        box.exec()
-        if box.clickedButton() is install and self._available_update == (release, main_point):
-            self.updates.install(release)
-
     def _install_available_update(self) -> None:
         if self._available_update is not None:
-            self.updates.install(self._available_update[0])
+            self.updates.install(self._available_update)
 
     # --- first run ----------------------------------------------------------------------------------------------
 
@@ -382,6 +361,7 @@ class App(QObject):
         """The meeting notes are on disk: the open meeting reloads its "Notes" tab, the project page its notes."""
         if window := self._transcript_windows.get(folder):
             window.notepad.reload_from_disk()
+        self.window.refresh_notes_search()
         self.window.refresh_project_page()
 
     def _after_recording(self, folder: pathlib.Path, heading: str, seconds: float = 0) -> None:
@@ -663,6 +643,7 @@ class App(QObject):
             window.tab_shown.connect(self._tab_shown)  # after opening: the closest tab it gave way to is not remembered
             window.recognize.connect(lambda p: self.recognize_selected([p]))
             window.meeting_changed.connect(lambda: self._refresh_window(always=True))
+            window.notes_saved.connect(self.window.refresh_notes_search)
             window.compose_minutes.connect(self.compose_minutes)
             window.ask_assistant.connect(self.ask_assistant)
             window.closed.connect(lambda w=window: self._forget_meeting(folder, w))
@@ -686,6 +667,11 @@ class App(QObject):
         """From the project page: the meeting on its "Notes" tab, also the one open already."""
         if (view := self.open_meeting(folder, NOTES)) is not None:
             view.show_tab(NOTES)
+
+    def _find_notes(self, folder: pathlib.Path, query: str) -> None:
+        if (view := self.open_meeting(folder, NOTES)) is not None:
+            view.show_tab(NOTES)
+            view.notepad.find(query)
 
     def _forget_meeting(self, folder: pathlib.Path, window: object) -> None:
         """A closed meeting is no longer open, so a click opens it again; the same meeting opened anew stays."""
@@ -744,6 +730,14 @@ class App(QObject):
             )
         self._refresh_window()
 
+    def open_notebook(self) -> None:
+        from knotes.ui.notebook_page import NotebookPage  # noqa: PLC0415 - loaded when first opened
+
+        if not isinstance(self.window.page, NotebookPage):
+            page = NotebookPage(self.settings.recordings, self._projects(), self.settings.project_looks)
+            self.window.show_page(page, tr("Notebook"), "блокнот")
+        self.show_window()
+
     def open_help(self) -> None:
         """Help as its own section in the meetings window; a link in an answer opens its settings section."""
         from knotes.ui import help_page  # noqa: PLC0415 - loaded when first opened
@@ -801,7 +795,8 @@ class App(QObject):
         config.changed.connect(self._changes_of(self.settings))
         config.restart.connect(self.restart)
         config.check_updates.connect(lambda: self.check_updates(manual=True))
-        self.window.show_page(config, tr("Settings"), "настройки")
+        if not self.window.show_page(config, tr("Settings"), "настройки"):
+            return
         self.show_window()
         if "настройки" not in self.settings.tips_shown:
             QTimer.singleShot(0, config, config.show_tips)
@@ -812,20 +807,22 @@ class App(QObject):
             self.window.page.show_section(code)
 
     def open_summary(self) -> None:
-        """The summary in the meetings window instead of the list, for the project selected on the left; the API key
-        balance is fetched again."""
+        """Open the summary for all projects and fetch the current key balance."""
         from knotes.ui.summary_window import SummaryWindow  # noqa: PLC0415 - loaded when first opened
 
-        params = recognition.params(self.settings)
+        speech, protocol = recognition.params(self.settings), minutes.params(self.settings)
+        provider, key = (speech.provider, speech.key)
+        if (provider.local_engine or not provider.balance or not key) and protocol.service.balance and protocol.key:
+            provider, key = protocol.service, protocol.key
         summary = SummaryWindow(
             self.settings.recordings,
-            None if self._on_computer() else lambda: providers.balance(params.provider, params.key),
-            params.provider.title,
+            None if provider.local_engine else lambda: providers.balance(provider, key),
+            provider.title,
             (self.settings.projects, self.settings.project_looks),
-            self.window.project if self.window.isVisible() else None,
         )
         summary.open_meeting.connect(self.open_meeting)
-        self.window.show_page(summary, tr("Summary"), "сводка")
+        if not self.window.show_page(summary, tr("Summary"), "сводка"):
+            return
         summary.display()
         summary.refresh_balance()
         self.show_window()

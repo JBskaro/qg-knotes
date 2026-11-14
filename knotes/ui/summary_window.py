@@ -58,9 +58,6 @@ class Tile(QFrame):
             self.strip.setValue(round(figure.share * 100))
 
 
-WAITING = object()  # the balance has not come yet; None is the answer "this provider does not report it"
-
-
 class SummaryWindow(QWidget):
     """Summary of the recordings folder; the key balance is requested from the provider in the background on every
     opening. Signal open_meeting(folder) on a double click on a meeting in the table."""
@@ -80,9 +77,7 @@ class SummaryWindow(QWidget):
         created projects with their colors and icons; project is the one selected at once (None means all)."""
         super().__init__()
         self.recordings, self._fetch_balance, self._provider = recordings, fetch_balance, provider
-        self._balance: object = WAITING
-        self._balance_at = datetime.datetime.now()  # when the balance came from the service
-        self._report: summary_report.Report | None = None  # counted for the filters
+        self._displayed = False
         self._balance_arrived.connect(self._show_balance)
         # read once: the filters and the balance count from memory, not from the folder again
         self._all_meetings = catalog.list_(recordings)
@@ -177,7 +172,7 @@ class SummaryWindow(QWidget):
 
     def repaint_theme(self) -> None:
         self._paint()
-        if self._report is not None:
+        if self._displayed:
             self.display()
 
     def _paint(self) -> None:
@@ -206,9 +201,8 @@ class SummaryWindow(QWidget):
         """Figures, charts and projects for the selected period and project, from the meetings and spending read when
         the window opened."""
         selection = self.filters.selection()
-        self._report = report = summary_report.report(
-            self._all_meetings, self._all_expenses, selection, datetime.date.today()
-        )
+        report = summary_report.report(self._all_meetings, self._all_expenses, selection, datetime.date.today())
+        self._displayed = True
         self.window().setWindowTitle(summary_report.title(selection.project, style.NAME))
         self.tiles[1].set_(report.meetings)
         self.tiles[2].set_(report.hours)
@@ -218,21 +212,14 @@ class SummaryWindow(QWidget):
         self.expenses.set_(report.costs, report.current, report.cost_tips)
         self.clock.set_(report.hours_bars, report.current)
         self.by_meetings.set_(report.rows)
-        self._show_spending()
+        self._show_spending(report)
 
-    def _show_spending(self) -> None:
-        """What the key balance changes: "Spent", key spending outside meetings in the breakdowns and the table, and
-        the balance tile. The rest of the summary is not counted again when the balance arrives."""
-        if self._report is None:
-            return
-        balance = self._balance if isinstance(self._balance, providers.Balance) else None
-        spent = summary_report.spending(self._report, balance, self._provider, self._spending_error)
-        self.tiles[0].set_(spent.spent)
-        self._show_lines(self._projects, spent.projects, tr("No meetings in this period"))
-        self._show_lines(self._models, spent.models, tr("No costs in this period"))
-        self.by_meetings.set_outside(spent.outside)
-        if self._balance is not WAITING:
-            self._balance_tile()
+    def _show_spending(self, report: summary_report.Report) -> None:
+        self.tiles[0].set_(summary_report.spent_figure(report, self._spending_error))
+        self._show_lines(
+            self._projects, summary_report.project_lines(report.projects), tr("No meetings in this period")
+        )
+        self._show_lines(self._models, summary_report.model_lines(report.result), tr("No costs in this period"))
 
     def _show_lines(self, grid_layout: QGridLayout, lines: list[Line], empty: str) -> None:
         """Breakdown rows: name, share strip, figure on the right, the tooltip on the whole row; without rows, empty
@@ -262,13 +249,6 @@ class SummaryWindow(QWidget):
         return kind_color(line.kind) if color is None else style.participant_color(color)[0]
 
     def _show_balance(self, balance: object) -> None:
-        """The balance arrived: the balance tile and the spending it changes, "Spent" may become the service
-        account."""
-        self._balance, self._balance_at = balance, datetime.datetime.now()
-        self._show_spending()
-
-    def _balance_tile(self) -> None:
-        self.refreshed.setText(
-            tr("{provider}, updated at {time}", provider=self._provider, time=f"{self._balance_at:%H:%M}")
-        )
-        self.tiles[3].set_(summary_report.balance_figure(self._balance, self._provider, self._all_meetings))
+        time = datetime.datetime.now().strftime("%H:%M")
+        self.refreshed.setText(tr("{provider}, updated at {time}", provider=self._provider, time=time))
+        self.tiles[3].set_(summary_report.balance_figure(balance, self._provider, self._all_meetings))

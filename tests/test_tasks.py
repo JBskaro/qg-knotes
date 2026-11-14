@@ -231,9 +231,35 @@ class TestBoard(unittest.TestCase):
         tasks.delete(self.recordings, custom.key)
         self.assertEqual(len(tasks.tasks(self.recordings)), 3)
         with self.assertRaises(ValueError):
-            tasks.delete(self.recordings, tasks.tasks(self.recordings)[0].key)  # minutes item: archive only
-        with self.assertRaises(ValueError):
             tasks.add(self.recordings, " ")
+
+    def test_new_protocol_requires_selection_and_deleted_items_stay_off_board(self):
+        (self.meeting / minutes.FILE).unlink()
+        minutes.write_draft(self.meeting, MINUTES)
+        self.assertEqual(tasks.tasks(self.recordings), [])
+        entries = tasks.review_items(self.meeting)
+        self.assertEqual(len(entries), 3)
+        self.assertTrue(all(not selected for _, _, selected in entries.values()))
+        key = next(iter(entries))
+        with self.assertRaises(tasks.GoneError):
+            tasks.review(self.recordings, self.meeting, {key}, {key})
+        tasks.review(self.recordings, self.meeting, {key}, set(entries))
+        (card,) = tasks.tasks(self.recordings)
+        self.assertEqual(card.key, key)
+        tasks.delete(self.recordings, key)
+        self.assertEqual(tasks.tasks(self.recordings), [])
+        self.assertIsNone(tasks.refreshed(self.recordings, card))
+        self.assertEqual((self.meeting / minutes.FILE).read_text(encoding="utf-8"), MINUTES)
+        self.assertFalse(tasks.review_items(self.meeting)[key][2])
+        tasks.review(self.recordings, self.meeting, {key}, set(entries))
+        self.assertEqual([card.key for card in tasks.tasks(self.recordings)], [key])
+
+    def test_editing_legacy_protocol_keeps_existing_cards_and_requires_review_for_new_ones(self):
+        original = {card.key for card in tasks.tasks(self.recordings)}
+        minutes.write_draft(self.meeting, MINUTES + "\n## Задачи\n\n1. Новая задача.\n")
+        self.assertEqual({card.key for card in tasks.tasks(self.recordings)}, original)
+        pending = tasks.review_items(self.meeting)
+        self.assertEqual([text for _, text, selected in pending.values() if not selected], ["Новая задача."])
 
     def test_archive(self):
         first = tasks.tasks(self.recordings)[0]
@@ -324,11 +350,20 @@ class TestBoard(unittest.TestCase):
         self.assertEqual(texts(priority=""), ["Доделать загрузку."])
         self.assertEqual(texts(priority="высокий"), [check])
         self.assertEqual(texts(due=tasks.OVERDUE), ["Доделать загрузку."])
+        self.assertEqual(texts(due=tasks.ON_TODAY), ["Доделать загрузку."])
         self.assertEqual(texts(due=tasks.THIS_WEEK), [check])  # up to Sunday
         self.assertEqual(texts(due=tasks.NO_DUE_DATE), [])
         self.assertEqual(texts(text="емкость"), [check])  # also in the checklist, ignoring "ё"
         self.assertEqual(texts(text="ОСТАТКОВ"), ["Доделать загрузку.", check])  # also in the source
         self.assertEqual(tasks.assignees(board), ["Дмитрий", "Игорь"])  # a question has no assignee
+
+    def test_on_today_ignores_done_and_cards_without_deadlines(self):
+        board = [
+            tasks.add(self.recordings, "Сегодня", edit_item=tasks.Edit(due=TODAY)),
+            tasks.add(self.recordings, "Без срока"),
+            tasks.add(self.recordings, "Готово", edit_item=tasks.Edit(due=TODAY, status=tasks.DONE)),
+        ]
+        self.assertEqual([z.text for z in tasks.pick_out(board, tasks.Filter(due=tasks.ON_TODAY), TODAY)], ["Сегодня"])
 
     def test_broken_cards_and_minutes_are_skipped(self):
         """One hand-edited card or minutes file in another encoding must not take the whole board down."""

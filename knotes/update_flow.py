@@ -28,7 +28,7 @@ class Updates(QObject):
 
     notice = Signal(str, str)  # heading and text of a toast
     checked = Signal(str)  # a pending update clears the saved date so it is offered again after restart
-    offered = Signal(object, str)  # a newer updates.Release and its main point: to ask whether to install it
+    offered = Signal(object, bool)  # newer GitHub release and whether the user requested the check
     current = Signal()
     downloading = Signal(bool)
     started = Signal()  # the installer or the swap runs: the program exits for it
@@ -62,6 +62,7 @@ class Updates(QObject):
         self._last_checked = today
         if result is None:
             self.checked.emit(today)
+            self.current.emit()
             if manual:
                 self.notice.emit(
                     tr("Cannot check for updates"), tr("The program's releases on GitHub are not available.")
@@ -74,7 +75,7 @@ class Updates(QObject):
                 self.notice.emit(tr("No updates"), tr("You have the latest version {version}.", version=VERSION))
             return
         self.checked.emit("")
-        self.offered.emit(result, next((s.strip(" -*") for s in result.notes.splitlines() if s.strip(" -*")), ""))
+        self.offered.emit(result, manual)
 
     def install(self, release: updates.Release) -> None:
         """Downloads the release file and installs it; not during a recording or a recognition."""
@@ -86,10 +87,7 @@ class Updates(QObject):
         if self._busy():
             self.notice.emit(
                 tr("I'll update later"),
-                tr(
-                    'A recording or recognition is in progress. When it ends, use "Check for updates" at the icon by '
-                    "the clock."
-                ),
+                tr("A recording or processing is in progress. Click the update icon again when it finishes."),
             )
             return
         file = updates.asset_for(release, updates.installed())
@@ -119,8 +117,7 @@ class Updates(QObject):
             self.notice.emit(
                 tr("I'll update later"),
                 tr(
-                    'A recording or recognition started while downloading. When it ends, use "Check for updates" at '
-                    "the icon by the clock."
+                    "Recording or processing started during the download. Click the update icon again when it finishes."
                 ),
             )
             return

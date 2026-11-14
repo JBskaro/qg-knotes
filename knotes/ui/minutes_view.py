@@ -17,10 +17,13 @@ from PySide6.QtGui import QGuiApplication, QTextDocument, QWheelEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QMenu,
     QProgressBar,
@@ -33,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from knotes import catalog, export, failures, minutes, transcript, system, kinds
+from knotes import catalog, export, failures, minutes, transcript, system, kinds, tasks
 from knotes.ui import export_dialog, style
 from knotes.language import tr
 
@@ -161,12 +164,14 @@ class MinutesView(QWidget):
     compose = Signal()
     ask_assistant = Signal()
     to_place = Signal(float)
+    changed = Signal()
 
     def __init__(self, folder: pathlib.Path, source_of: Callable[[], str]):
         super().__init__()
         self.folder, self._source_fn = folder, source_of
         self._busy = False
         self._modified = False  # the edit differs from the file
+        self._edit_base: str | None = None
         self._rendered: tuple[str, bool, str] | None = None
         self.save_problem = ""  # why the last save failed
         self._save_later = QTimer(self, singleShot=True, interval=SAVE_MS)
@@ -201,8 +206,10 @@ class MinutesView(QWidget):
         menu.addSeparator()
         menu.addAction(tr("Save as file (PDF, Word)…"), self._save_file)
         self._copy_button.setMenu(menu)
-        self._change = QPushButton(tr("Change"))
+        self._change = QPushButton(tr("Edit minutes"))
         self._change.clicked.connect(self._toggle_edit)
+        self._board = QPushButton(tr("Select tasks"))
+        self._board.clicked.connect(self._review_tasks)
         self.result = QLabel()
         self.result.setTextFormat(Qt.TextFormat.PlainText)  # a service refusal text is not markup
         self.result.setObjectName("тихий_текст")
@@ -214,7 +221,7 @@ class MinutesView(QWidget):
             ]
         )
         row = QHBoxLayout()
-        for widget in (self._copy_button, self._change):
+        for widget in (self._copy_button, self._change, self._board):
             row.addWidget(widget)
         row.addStretch()
         row.addWidget(self.result)
@@ -252,7 +259,11 @@ class MinutesView(QWidget):
         )
         self._assistant_link.setObjectName("тихий_текст")
         self._assistant_link.linkActivated.connect(lambda _link: self.ask_assistant.emit())
-        return self._centered(self._missing, row, self._destination, self._assistant_link, self._error_label)
+        self._write_manually = QPushButton(tr("Write manually"))
+        self._write_manually.clicked.connect(lambda: self._start_edit())
+        return self._centered(
+            self._missing, row, self._destination, self._write_manually, self._assistant_link, self._error_label
+        )
 
     def _running(self) -> QWidget:
         bar = QProgressBar()
@@ -404,13 +415,14 @@ class MinutesView(QWidget):
             self.meeting_kind.setCurrentIndex(max(0, self.meeting_kind.findData(kinds.meeting_kind(self.folder).name)))
             self._destination.setText(self._source_fn() if recognized else tr("Transcribe the meeting first"))
             self.pages.setCurrentIndex(EMPTY)
+        self._write_manually.setEnabled(not self.file.exists())
         error = error or self._error_label.text()
         self._error_label.setText(error)
         self._error_label.setVisible(bool(error) and not exists)
-        for button in (self._copy_button, self._change):
+        for button in (self._copy_button, self._change, self._board):
             button.setVisible(exists and not self._busy)
         self._more.setVisible(self.file.exists() and not self._busy)
-        self._change.setText(tr("Change"))
+        self._change.setText(tr("Edit minutes"))
         self.result.setText(error if exists else "")  # price and model are in the summary, per meeting
 
     def _file_changed(self, _path: str) -> None:
@@ -445,17 +457,31 @@ class MinutesView(QWidget):
         could not be written; the edit stays in the field, the reason is shown and kept in save_problem."""
         self._save_later.stop()
         text = self.edit_item.toPlainText()
-        if not (self._modified and self.pages.currentIndex() == EDIT and text.strip()):
+        if not (self._modified and self.pages.currentIndex() == EDIT):
             return True
+        if not text.strip():
+            self.save_problem = tr("Enter the minutes text.")
+            self.result.setText(self.save_problem)
+            return False
         try:
-            with transcript.locked(self.file):  # the AI assistant may be saving the minutes at this moment
-                transcript.write_text(self.file, text.rstrip() + "\n")
-        except OSError as error:
+            with transcript.locked(self.file):
+                try:
+                    saved = self.file.read_text(encoding="utf-8")
+                except FileNotFoundError:
+                    saved = None
+                if saved != self._edit_base:
+                    raise ValueError(tr("The minutes changed in another window. Your draft is still here."))
+                written = text.rstrip() + "\n"
+                minutes.write_draft(self.folder, written)
+        except (OSError, ValueError) as error:
             log.warning("minutes edit not saved: %s", error)
-            self.save_problem = failures.text(error)
+            self.save_problem = str(error) if isinstance(error, ValueError) else failures.text(error)
             self.result.setText(tr("Not saved: {reason}", reason=self.save_problem))
             return False
+        self._edit_base = written
         self._modified, self.save_problem = False, ""
+        self.result.clear()
+        self.changed.emit()
         return True
 
     def _toggle_edit(self) -> None:
@@ -465,11 +491,33 @@ class MinutesView(QWidget):
             return
         if self.pages.currentIndex() != VIEWING or self._rendered is None:
             return
+        self._start_edit(self._rendered[0])
+
+    def _start_edit(self, text: str | None = None) -> None:
+        self._edit_base = text
         with QSignalBlocker(self.edit_item):
-            self.edit_item.setPlainText(self._rendered[0])
+            self.edit_item.setPlainText(text or tr("# Minutes\n\n## Decisions\n\n## Tasks\n"))
         self.pages.setCurrentIndex(EDIT)
+        self._change.show()
+        self._board.setVisible(text is not None)
         self._change.setText(tr("Done"))
         self.edit_item.setFocus()
+
+    def _review_tasks(self) -> None:
+        if not self.save():
+            return
+        try:
+            entries = tasks.review_items(self.folder)
+            dialog = TaskSelection(entries, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            tasks.review(self.folder.parent, self.folder, dialog.selected(), set(entries))
+        except (OSError, ValueError) as error:
+            reason = str(error) if isinstance(error, ValueError) else failures.text(error)
+            self._report(reason)
+            return
+        self.changed.emit()
+        self._report(tr("Task selection saved"))
 
     def _compose(self, kind_: str) -> None:
         """The kind is saved in the meeting: it is used to write the minutes again and from the AI assistant."""
@@ -528,6 +576,36 @@ class MinutesView(QWidget):
         second = address.removeprefix("#")
         if second.isdigit():
             self.to_place.emit(float(second))
+
+
+class TaskSelection(QDialog):
+    def __init__(self, entries: dict[str, tuple[str, str, bool]], parent: QWidget):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Select tasks"))
+        self.resize(620, 440)
+        self.list_ = QListWidget()
+        self.list_.setWordWrap(True)
+        for key, (heading, text, selected) in entries.items():
+            item = QListWidgetItem(f"{text}\n{heading}", self.list_)
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            item.setCheckState(Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked)
+        label = style.caption(tr("Check the items to show on the board."))
+        if not entries:
+            label.setText(tr("There are no items to add from this protocol."))
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(label)
+        layout.addWidget(self.list_, 1)
+        layout.addWidget(box)
+
+    def selected(self) -> set[str]:
+        return {
+            item.data(Qt.ItemDataRole.UserRole)
+            for index in range(self.list_.count())
+            if (item := self.list_.item(index)).checkState() == Qt.CheckState.Checked
+        }
 
 
 class InstructionDialog(QDialog):

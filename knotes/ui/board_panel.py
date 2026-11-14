@@ -142,7 +142,7 @@ class TaskPanel(QFrame):
     panel with gone(task)."""
 
     saved = Signal(object)  # the card as written
-    removed = Signal()  # the own task was deleted
+    removed = Signal()  # the task was deleted from the board
     gone = Signal(object)  # the card that is no longer on the board
     closed = Signal()
     open_place = Signal(pathlib.Path, float)
@@ -392,7 +392,7 @@ class TaskPanel(QFrame):
         self._note_mark.setVisible(exists and not task.custom)
         self.archive.setVisible(exists)
         self.archive.setText(language.tr("Restore from archive") if task.archive else language.tr("В архив"))
-        self.delete.setVisible(exists and task.custom)
+        self.delete.setVisible(exists)
 
     def _show_due(self) -> None:
         self.due.display(f"{self._due:%d.%m.%Y}" if self._due else language.tr("No due date"))
@@ -513,11 +513,8 @@ class TaskPanel(QFrame):
     def _delete(self) -> None:
         if self.task is None or not delete_task(self, self.recordings, self.task):
             return
-        self._later.stop()
-        self.task, self._saved = None, {}
-        self.hide()
         self.removed.emit()
-        self.closed.emit()
+        self.discard()
 
     def _release(self) -> bool:
         """Saves the card before the panel lets it go. If the save failed, the card stays once more so the text can

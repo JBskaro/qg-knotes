@@ -24,7 +24,7 @@ import re
 import uuid
 from collections.abc import Callable
 
-from knotes import catalog, disk_names, kinds, language, minutes, notes, projects, transcript
+from knotes import catalog, disk_names, language, minutes, notes, projects, transcript
 
 FILE = pathlib.Path(".узелок", "задачи.json")
 TODO, IN_PROGRESS, DONE = projects.BASES
@@ -38,8 +38,9 @@ PRIORITIES = {
     "средний": language.tr_key("Средний"),
     "низкий": language.tr_key("Низкий"),
 }
-OVERDUE, THIS_WEEK, NO_DUE_DATE = "просрочено", "на неделе", "без срока"  # due date filters
+ON_TODAY, OVERDUE, THIS_WEEK, NO_DUE_DATE = "на сегодня", "просрочено", "на неделе", "без срока"
 DUES = {
+    ON_TODAY: language.tr_key("На сегодня"),
     OVERDUE: language.tr_key("Просрочено"),
     THIS_WEEK: language.tr_key("На этой неделе"),
     NO_DUE_DATE: language.tr_key("Без срока"),
@@ -140,7 +141,7 @@ class Filter:
     who: str | None = None
     label: str | None = None
     priority: str | None = None
-    due: str | None = None  # OVERDUE, THIS_WEEK or NO_DUE_DATE
+    due: str | None = None  # a key of DUES
     text: str = ""
     archive: bool = False
 
@@ -272,14 +273,9 @@ def _board_items(file: pathlib.Path, _file_key: tuple[int, int]) -> tuple[tuple,
     """(kind, section heading, text, who, due date, second) of the minutes items that go to the board, re-read only
     when the file changed (mtime and size)."""
     result = []
-    for section in minutes.sections(file.read_text(encoding="utf-8"))[1]:
-        board = kinds.description(section.heading).board
-        for item in (p for p in minutes.items(section) if p.number):
-            confirms = minutes.tentative(item.who)
-            kind = board or (DECISION if confirms is not None else "")
-            if kind:
-                who, due = who_and_due(item.who if confirms is None else confirms)
-                result.append((kind, section.heading, item.text, who, due, item.second))
+    for heading, item, board, assignee in minutes.board_items(file.read_text(encoding="utf-8")):
+        who, due = who_and_due(assignee)
+        result.append((board or DECISION, heading, item.text, who, due, item.second))
     return tuple(result)
 
 
@@ -311,11 +307,31 @@ def _skipped(make: Callable[[], Task], what: str) -> Task | None:
         return None
 
 
+def _minutes_key(folder: pathlib.Path, values: tuple) -> str:
+    return f"{folder.name}|{values[1]}|{values[2]}"
+
+
 def _minutes_card(values: tuple, project: str, origin: Source, data: dict) -> Task | None:
-    kind, heading, text, who, due, _second = values
-    key = f"{origin.folder.name}|{heading}|{text}"  # type: ignore[union-attr]
+    kind, _heading, text, who, due, _second = values
+    key = _minutes_key(origin.folder, values)  # type: ignore[arg-type]
     task = Task(key, text, who, due, kind, project, _part(data, "состояния", dict).get(key, TODO), origin)
     return _skipped(lambda: _with_data(task, _part(data, "правки", dict).get(key, {})), key)
+
+
+def _on_board(data: dict, key: str, selected: set[str] | None) -> bool:
+    return key not in _part(data, "удалены", dict) and (selected is None or key in selected)
+
+
+def _selected(folder: pathlib.Path, data: dict) -> set[str] | None:
+    selected = _part(data, "отбор", dict).get(folder.name)
+    if isinstance(selected, list):
+        return {key for key in selected if isinstance(key, str)}
+    review = folder / minutes.BOARD_REVIEW
+    if review.exists():
+        ids = transcript.read_json(review, [])
+        known = {value for value in ids if isinstance(value, str)}
+        return {_minutes_key(folder, v) for v in _items_of(folder) if minutes.board_item_id(v[1], v[2]) in known}
+    return None
 
 
 def _from_minutes(meeting: catalog.Meeting, data: dict) -> list[Task]:
@@ -326,9 +342,11 @@ def _from_minutes(meeting: catalog.Meeting, data: dict) -> list[Task]:
         log.warning("skipped the minutes of %s on the board: %s", meeting.folder.name, error)
         return []
     date = meeting.date.date()
+    selected = _selected(meeting.folder, data)
     cards = (
         _minutes_card(values, meeting.project, Source(meeting.folder, meeting.heading, date, values[5]), data)
         for values in items
+        if _on_board(data, _minutes_key(meeting.folder, values), selected)
     )
     return [z for z in cards if z is not None]
 
@@ -375,6 +393,30 @@ def tasks(
     return [_placed(z, layouts) for z in result if z is not None]
 
 
+def review_items(folder: pathlib.Path) -> dict[str, tuple[str, str, bool]]:
+    """Protocol entries and their current board membership, in reading order."""
+    data = _data(folder.parent)
+    selected = _selected(folder, data)
+    entries = {_minutes_key(folder, values): (values[1], values[2]) for values in _items_of(folder)}
+    return {key: (*entry, _on_board(data, key, selected)) for key, entry in entries.items()}
+
+
+@transcript.locked_edit(FILE)
+def review(recordings: pathlib.Path, folder: pathlib.Path, keys: set[str], expected: set[str]) -> None:
+    """Store the chosen entries for this meeting, preserving the rest of the board."""
+    allowed = {_minutes_key(folder, values) for values in _items_of(folder)}
+    if expected != allowed or not keys <= allowed:
+        raise GoneError(language.tr("The minutes changed. Open the task selection again."))
+    data = _data(recordings)
+    reviews = _part(data, "отбор", dict)
+    reviews[folder.name] = sorted(keys)
+    data["отбор"] = reviews
+    excluded = _part(data, "удалены", dict)
+    for key in keys:
+        excluded.pop(key, None)
+    _write(recordings, data)
+
+
 def refreshed(recordings: pathlib.Path, task: Task) -> Task | None:
     """The card as stored now, read without the whole board (after an edit in the card panel); None if it is gone."""
     data = _data(recordings)
@@ -390,7 +432,9 @@ def refreshed(recordings: pathlib.Path, task: Task) -> Task | None:
             items = _items_of(folder)
         except (OSError, ValueError):
             return None
-        values = next((z for z in items if f"{folder.name}|{z[1]}|{z[2]}" == task.key), None)
+        if not _on_board(data, task.key, _selected(folder, data)):
+            return None
+        values = next((z for z in items if _minutes_key(folder, z) == task.key), None)
         fresh = values and _minutes_card(values, task.project, task.origin, data)
     return _placed(fresh, projects.all_columns(recordings)) if fresh else None
 
@@ -424,6 +468,8 @@ def in_order(list_: list[Task], today: datetime.date) -> list[Task]:
 
 
 def _due_matches(task: Task, due: str | None, today: datetime.date) -> bool:
+    if due == ON_TODAY:
+        return task.kind == TASK and task.status != DONE and task.due is not None and task.due <= today
     if due == OVERDUE:
         return task.overdue(today)
     if due == THIS_WEEK:  # from today through Sunday
@@ -459,11 +505,13 @@ def assignees(list_: list[Task]) -> list[str]:
     return sorted({z.who for z in list_ if z.who and z.kind == TASK}, key=str.lower)
 
 
-def _exists(recordings: pathlib.Path, key: str) -> bool:
+def _exists(recordings: pathlib.Path, key: str, data: dict) -> bool:
     """The minutes item is still in its minutes."""
     folder = recordings / key.partition("|")[0]
     try:
-        return any(f"{folder.name}|{z[1]}|{z[2]}" == key for z in _items_of(folder))
+        return _on_board(data, key, _selected(folder, data)) and any(
+            _minutes_key(folder, z) == key for z in _items_of(folder)
+        )
     except (OSError, ValueError):
         return False
 
@@ -473,9 +521,9 @@ def edit(recordings: pathlib.Path, key: str, edit_item: Edit) -> None:
     """An own task changes in place, a minutes item gets a separate edit; new labels are created. A card that is no
     longer on the board raises GoneError: the edit is not written to nowhere."""
     fields = _to_data(edit_item)
-    if not key.startswith(OWN_PREFIX) and not _exists(recordings, key):
-        raise GoneError(language.tr("This card is no longer on the board: its minutes were written again without it"))
     data = _data(recordings)
+    if not key.startswith(OWN_PREFIX) and not _exists(recordings, key, data):
+        raise GoneError(language.tr("This card is no longer on the board: its minutes were written again without it"))
     _change(data, key, fields)
     _create_labels(data, fields.get("метки", []))
     _write(recordings, data)
@@ -553,13 +601,18 @@ def add(recordings: pathlib.Path, text: str, project: str = "", edit_item: Edit 
 
 @transcript.locked_edit(FILE)
 def delete(recordings: pathlib.Path, key: str) -> None:
-    """Only an own task: a minutes item is archived instead."""
-    if not key.startswith(OWN_PREFIX):
-        raise ValueError(language.tr("A task from the minutes can't be deleted, archive it instead"))
+    """Remove a manual task or exclude a protocol item from the board and agenda."""
     data = _data(recordings)
-    data["свои"] = [
-        d for d in _part(data, "свои", list) if not isinstance(d, dict) or OWN_PREFIX + str(d.get("ид")) != key
-    ]
+    if key.startswith(OWN_PREFIX):
+        data["свои"] = [
+            d for d in _part(data, "свои", list) if not isinstance(d, dict) or OWN_PREFIX + str(d.get("ид")) != key
+        ]
+    elif _exists(recordings, key, data):
+        excluded = _part(data, "удалены", dict)
+        excluded[key] = True
+        data["удалены"] = excluded
+        _part(data, "правки", dict).pop(key, None)
+        _part(data, "состояния", dict).pop(key, None)
     _write(recordings, data)
 
 

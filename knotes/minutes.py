@@ -12,6 +12,7 @@ another language the model gets its headings and template phrases, and the progr
 
 import dataclasses
 import functools
+import hashlib
 import json
 import logging
 import pathlib
@@ -23,6 +24,7 @@ from knotes import settings
 from knotes import vocabulary as vocab
 
 FILE = "протокол.md"
+BOARD_REVIEW = ".отбор-задач.json"
 DEFAULT_INSTRUCTION = pathlib.Path(__file__).with_name("minutes_prompt.md")
 LANGUAGES = pathlib.Path(__file__).with_name("minutes_languages.json")
 TIME, seconds_list = transcript.TIME, transcript.seconds_list  # time in the minutes is written as in the transcript
@@ -223,9 +225,43 @@ def assistant_request(folder: pathlib.Path) -> str:
 def save(folder: pathlib.Path, text: str, model: str, cost: float = 0.0) -> pathlib.Path:
     """The draft into the meeting folder without a code-block wrapper; who wrote it and what it cost."""
     file = folder / FILE
-    transcript.write_text(file, _unwrapped(text))
+    write_draft(folder, _unwrapped(text))
     catalog.set_(folder, minutes_cost=round(cost, 5) or None, minutes_model=model)
     return file
+
+
+def write_draft(folder: pathlib.Path, text: str) -> None:
+    """Write under the meeting lock. Keep the previous protocol as the initial board selection on first edit."""
+    file = folder / FILE
+    review = folder / BOARD_REVIEW
+    if not review.exists():
+        try:
+            previous = file.read_text(encoding="utf-8")
+        except (FileNotFoundError, UnicodeError):
+            previous = ""
+        transcript.write_json(review, sorted(board_item_ids(previous)))
+    transcript.write_text(file, text)
+
+
+def board_item_id(heading: str, text: str) -> str:
+    return hashlib.sha256(f"{heading}|{text}".encode()).hexdigest()
+
+
+def board_items(text: str) -> list[tuple[str, Item, str, str]]:
+    result = []
+    for section in sections(text)[1]:
+        board = kinds.description(section.heading).board
+        for item in items(section):
+            if not item.number:
+                continue
+            confirms = tentative(item.who)
+            if board or confirms is not None:
+                result.append((section.heading, item, board, item.who if confirms is None else confirms))
+    return result
+
+
+def board_item_ids(text: str) -> set[str]:
+    return {board_item_id(heading, item.text) for heading, item, _, _ in board_items(text)}
 
 
 def compose(folder: pathlib.Path, params_: Params, keep: Callable[[pathlib.Path], None] | None = None) -> pathlib.Path:
@@ -271,7 +307,7 @@ def _paid(
                 keep(folder)
         except OSError:
             log.exception("the previous minutes of %s are not kept", folder.name)
-        transcript.write_text(file, _unwrapped(text))
+        write_draft(folder, _unwrapped(text))
     try:
         spending.write(folder, catalog.MINUTES_KIND, model, cost)  # before the new cost goes to the meeting
     except OSError:

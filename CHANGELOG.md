@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.0 - 2026-11-15
+
+- Add a standalone notebook with formatting, project filters, archive, deletion, and restoration of the last note and cursor.
+- Improve meeting notes with timed entries, local search, and private lines kept out of assistant responses and exports.
+- Add a meeting filter for recordings that need transcription or minutes.
+- Let users edit or write minutes manually and select which items to add to the task board. Add card deletion and a filter for open tasks due today or overdue.
+- Calculate the spending total from the local journal and show provider key usage separately.
+- Show a download icon above Settings when GitHub has a newer release. Clicking the icon starts installation, then the app restarts.
+
 ## 0.22.6 - 2026-11-13
 
 - Show an update notification and keep the Update button next to search when installation is postponed.

@@ -182,7 +182,7 @@ class ProjectPage(QWidget):
         column.setSpacing(10)
         secondary, quiet = style.text_tones()
         for meeting in (v for v in meetings if v.folder.is_dir()):
-            lines = [s.text.strip() for s in notes.read(meeting.folder).lines if s.text.strip()]
+            lines = [s.text.strip() for s in notes.read(meeting.folder).shared]
             if not lines:
                 continue
             snippet = "<br>".join(html.escape(s) for s in lines[:SNIPPET_LINES])

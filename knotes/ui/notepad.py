@@ -13,7 +13,7 @@ import logging
 import pathlib
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizeGrip,
     QSplitter,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -84,6 +85,11 @@ class Highlighter(QSyntaxHighlighter):
     their section, questions in amber, checked boxes "- [x]" gray and struck out."""
 
     def highlightBlock(self, text: str) -> None:
+        if notes.PRIVATE in text:
+            muted = QTextCharFormat()
+            muted.setForeground(_rgb("янтарный"))
+            self.setFormat(0, len(text.encode("utf-16-le")) // 2, muted)
+            return
         if text.startswith("#"):
             kind = QTextCharFormat()
             kind.setFontWeight(QFont.Weight.DemiBold)
@@ -200,7 +206,15 @@ class NotesEditor(QPlainTextEdit):
         cursor = self.textCursor()
         at_start = stdin and cursor.positionInBlock() == 0 and bool(cursor.block().text())
         minute = cursor.block().userState()
-        super().keyPressEvent(event)
+        if stdin and notes.PRIVATE in cursor.block().text():
+            cursor.beginEditBlock()
+            try:
+                super().keyPressEvent(event)
+                self._keep_private_split()
+            finally:
+                cursor.endEditBlock()
+        else:
+            super().keyPressEvent(event)
         if at_start:  # the line moved down: its minute goes with it, the empty line above gets none
             lower = self.textCursor().block()
             lower.setUserState(minute)
@@ -209,24 +223,72 @@ class NotesEditor(QPlainTextEdit):
             self.textCursor().block().setUserState(-1)  # the new line gets its own minute, not the neighbor's
         self.field.update()
 
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        cursor = self.textCursor()
+        first = self.document().findBlock(cursor.selectionStart())
+        if not source.hasText() or not self._includes_private(first, cursor.selectionEnd()):
+            super().insertFromMimeData(source)
+            return
+        cursor.beginEditBlock()
+        try:
+            cursor.insertText(source.text())
+            self.setTextCursor(cursor)
+            for number in range(first.blockNumber(), cursor.blockNumber() + 1):
+                self._keep_private(self.document().findBlockByNumber(number))
+        finally:
+            cursor.endEditBlock()
+
+    @staticmethod
+    def _includes_private(block: QTextBlock, end: int) -> bool:
+        while block.isValid() and block.position() <= end:
+            if notes.PRIVATE in block.text():
+                return True
+            block = block.next()
+        return False
+
+    def _keep_private_split(self) -> None:
+        cursor = self.textCursor()
+        for block in (cursor.block().previous(), cursor.block()):
+            self._keep_private(block)
+
+    @staticmethod
+    def _keep_private(block: QTextBlock) -> None:
+        if block.isValid() and block.text().strip() and notes.PRIVATE not in block.text():
+            QTextCursor(block).insertText(f"{notes.PRIVATE} ")
+
+    def toggle_private(self) -> None:
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        line = notes.NoteLine.from_body(cursor.selectedText())
+        cursor.insertText(f"{notes.PRIVATE} {line.text}" if not line.private else line.text)
+        self.setTextCursor(cursor)
+        self.setFocus()
+
     def checkbox(self) -> None:
         """A checkbox for the whole line (paragraph), not for its visible part when it wraps."""
         line = self.textCursor()
         line.movePosition(QTextCursor.MoveOperation.StartOfBlock)
         line.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
-        text = line.selectedText()
-        for before, became in (("- [ ] ", "- [x] "), ("- [x] ", "- [ ] ")):
-            if text.startswith(before):
-                line.insertText(became + text[len(before) :])
-                return
-        line.insertText("- [ ] " + text)
+        current = notes.NoteLine.from_body(line.selectedText())
+        text = current.text
+        if text.startswith(("- [ ] ", "- [x] ")):
+            text = ("- [x] " if text.startswith("- [ ] ") else "- [ ] ") + text[6:]
+        else:
+            text = "- [ ] " + text
+        line.insertText(notes.NoteLine(text, private=current.private).body())
 
     def insert_kind(self, kind: str) -> None:
         """Puts "<kind> - " at the start of the line; in an empty line typing continues right after it."""
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-        if not cursor.block().text().startswith(f"{kind} -"):
-            cursor.insertText(f"{kind} - ")
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        line = notes.NoteLine.from_body(cursor.selectedText())
+        checkbox = line.text[:6] if line.text.startswith(("- [ ] ", "- [x] ")) else ""
+        body = line.text[len(checkbox) :]
+        prefixes = (*notes.KINDS, *(tr(word) for word in notes.KINDS))
+        text = next((body[len(word) + 3 :] for word in prefixes if body.startswith(f"{word} - ")), body)
+        cursor.insertText(notes.NoteLine(f"{checkbox}{kind} - {text}", private=line.private).body())
         cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
         self.setTextCursor(cursor)
         self.setFocus()
@@ -240,7 +302,7 @@ class NotesEditor(QPlainTextEdit):
 
     def set_(self, lines: tuple[notes.NoteLine, ...]) -> None:
         self.blockSignals(True)
-        self.setPlainText("\n".join(s.text for s in lines))
+        self.setPlainText("\n".join(s.body() for s in lines))
         block = self.document().firstBlock()
         for line in lines:
             block.setUserState(line.second + 1 if line.second is not None else -1)
@@ -251,7 +313,9 @@ class NotesEditor(QPlainTextEdit):
     def lines(self) -> tuple[notes.NoteLine, ...]:
         result, block = [], self.document().firstBlock()
         while block.isValid():
-            result.append(notes.NoteLine(block.text(), block.userState() - 1 if block.userState() > 0 else None))
+            result.append(
+                notes.NoteLine.from_body(block.text(), block.userState() - 1 if block.userState() > 0 else None)
+            )
             block = block.next()
         return tuple(result)
 
@@ -347,15 +411,116 @@ class AgendaPanel(QWidget):
         menu.exec(self.list_.viewport().mapToGlobal(point))
 
 
+class NotesReview(QWidget):
+    to_place = Signal(float)
+    play_at = Signal(float)
+    edit_line = Signal(int)
+
+    def __init__(self, folder: pathlib.Path):
+        super().__init__()
+        self.folder = folder
+        self._entries: list[tuple[float | None, int | None, str]] = []
+        self._audio = self._playing = False
+        self.search = style.ClearableLine()
+        self.search.setPlaceholderText(tr("Find in notes"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._show_matches)
+        self.search.returnPressed.connect(self._activate)
+        self.list_ = QListWidget()
+        self.list_.setWordWrap(True)
+        self.list_.itemActivated.connect(self._activate)
+        self.list_.currentItemChanged.connect(self._selection)
+        self.empty = style.caption("")
+        self.edit_button = QPushButton(tr("Edit note"))
+        self.edit_button.clicked.connect(self._edit)
+        self.play_button = QPushButton(tr("Listen"))
+        self.play_button.clicked.connect(self._play)
+        actions = QHBoxLayout()
+        actions.addWidget(self.play_button)
+        actions.addWidget(self.edit_button)
+        actions.addStretch()
+        column = QVBoxLayout(self)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(self.search)
+        column.addWidget(self.list_, 1)
+        column.addWidget(self.empty)
+        column.addLayout(actions)
+        self.setFocusProxy(self.search)
+
+    def set_lines(self, lines: tuple[notes.NoteLine, ...]) -> None:
+        found = catalog.meeting(self.folder)
+        self._audio = bool(found and found.has_audio)
+        self._entries = [(line.second, n, line.body()) for n, line in enumerate(lines) if line.text.strip()]
+        self._entries.extend(
+            (mark["время"], None, tr(transcript.MARKER))
+            for mark in transcript.labels(self.folder)
+            if mark["текст"] == transcript.MARKER
+        )
+        self._entries.sort(key=lambda entry: entry[0] if entry[0] is not None else float("inf"))
+        self._show_matches()
+
+    def _show_matches(self) -> None:
+        self.list_.clear()
+        query = catalog.for_search(self.search.text().strip())
+        for second, number, text in self._entries:
+            when = transcript.time(second) if second is not None else ""
+            caption = f"{when}   {text}" if when else text
+            if query not in catalog.for_search(caption):
+                continue
+            item = QListWidgetItem(caption)
+            item.setData(Qt.ItemDataRole.UserRole, (second, number))
+            self.list_.addItem(item)
+        self.empty.setText(tr("No matching notes") if query else tr("No notes or marks yet"))
+        self.empty.setVisible(not self.list_.count())
+        self.list_.setCurrentRow(0)
+        self._selection()
+
+    def _selected(self) -> tuple[float | None, int | None]:
+        item = self.list_.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else (None, None)
+
+    def _selection(self) -> None:
+        second, number = self._selected()
+        self.play_button.setEnabled(self._audio and (self._playing or second is not None))
+        self.edit_button.setEnabled(number is not None)
+
+    def _activate(self) -> None:
+        second, number = self._selected()
+        if second is not None and (self.folder / transcript.PHRASES).is_file():
+            self.to_place.emit(second)
+        elif number is not None:
+            self.edit_line.emit(number)
+        elif self.play_button.isEnabled():
+            self._play()
+
+    def playing(self, active: bool) -> None:
+        self._playing = active
+        self.play_button.setText(tr("Stop listening") if active else tr("Listen"))
+        self._selection()
+
+    def _play(self) -> None:
+        second, _ = self._selected()
+        if second is not None or self._playing:
+            self.play_at.emit(second if second is not None else 0.0)
+
+    def _edit(self) -> None:
+        _, number = self._selected()
+        if number is not None:
+            self.edit_line.emit(number)
+
+
 class Notepad(QWidget):
     """Agenda, notes and quick marks; saves itself while the user types and on closing."""
 
     to_place = Signal(float)
     mark = Signal()  # "★" during recording
+    play_at = Signal(float)
+    saved = Signal()
 
     def __init__(self, folder: pathlib.Path, clock: Callable[[], float] | None = None, on_toast: bool = False):
         super().__init__()
         self.folder, self._modified = folder, False
+        self._loaded = notes.Notes()
         self._spare: pathlib.Path | None = None  # a copy of the notes that did not save
         self.agenda = AgendaPanel()
         self.agenda.meeting_changed.connect(self._later)
@@ -373,10 +538,53 @@ class Notepad(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(6)
         column.addWidget(self.agenda)
-        column.addWidget(self.editor, 1)
+        self.review = NotesReview(folder) if clock is None else None
+        if self.review is None:
+            column.addWidget(self.editor, 1)
+        else:
+            self._build_views(column)
         column.addWidget(self.failure)
-        column.addLayout(self._note_marks(clock is not None))
+        self.tools = QWidget()
+        self.tools.setLayout(self._note_marks(clock is not None))
+        column.addWidget(self.tools)
+        self.setFocusProxy(self.editor)
         self.load()
+
+    def _build_views(self, column: QVBoxLayout) -> None:
+        self.views = QStackedWidget()
+        self.views.addWidget(self.editor)
+        self.views.addWidget(self.review)
+        self.tabs = style.Segments([(0, tr("Edit notes")), (1, tr("By time"))], 0)
+        self.tabs.selected.connect(self._show_view)
+        self.review.to_place.connect(self.to_place)
+        self.review.play_at.connect(self.play_at)
+        self.review.edit_line.connect(self._edit_line)
+        column.addWidget(self.tabs)
+        column.addWidget(self.views, 1)
+
+    def _show_view(self, index: int) -> None:
+        self.tabs.select(index)
+        self.views.setCurrentIndex(index)
+        self.tools.setVisible(index == 0)
+        self.setFocusProxy(self.review if index == 1 else self.editor)
+        if index == 1:
+            self.review.set_lines(self.editor.lines())
+
+    def _edit_line(self, number: int) -> None:
+        self._show_view(0)
+        self.editor.setTextCursor(QTextCursor(self.editor.document().findBlockByNumber(number)))
+        self.editor.setFocus()
+
+    def find(self, query: str | None = None) -> None:
+        self._show_view(1)
+        if query is not None:
+            self.review.search.setText(query)
+        self.review.search.setFocus()
+        self.review.search.selectAll()
+
+    def _toggle_private(self) -> None:
+        self.editor.toggle_private()
+        self.save()
 
     def _note_marks(self, recording_now: bool) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -401,17 +609,28 @@ class Notepad(QWidget):
             star.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             star.clicked.connect(self.mark)
             row.addWidget(star)
+        private = QToolButton()
+        private.setText(notes.PRIVATE if recording_now else f"{notes.PRIVATE} {tr('Only me')}")
+        private.setAccessibleName(tr("Only me"))
+        private.setToolTip(tr("Only me · Keep this line out of AI and exports"))
+        private.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        private.clicked.connect(self._toggle_private)
+        row.addWidget(private)
         row.addStretch()
-        tooltip = QLabel(tr("Ctrl+Enter - checkbox"))
-        tooltip.setObjectName("тихий_текст")
-        row.addWidget(tooltip)
+        if recording_now:
+            tooltip = QLabel(tr("Ctrl+Enter - checkbox"))
+            tooltip.setObjectName("тихий_текст")
+            row.addWidget(tooltip)
         return row
 
     def load(self) -> None:
         read_count = notes.read(self.folder)
         self.agenda.set_(read_count.agenda)
         self.editor.set_(read_count.lines)
+        self._loaded = read_count
         self._modified = False
+        if self.review is not None and self.views.currentIndex() == 1:
+            self.review.set_lines(read_count.lines)
 
     def reload_from_disk(self) -> None:
         """Notes may have been written in another window (the recording notepad): reloads if nothing was edited here."""
@@ -431,21 +650,23 @@ class Notepad(QWidget):
         window. A failed write (the file is busy, the disk is full) keeps the text here with the reason and a copy
         outside the meeting folder, the next edit or closing tries again. Returns whether nothing is left unsaved."""
         self._save_later.stop()
-        if not (self._modified and self.folder.is_dir()):
+        if not self._modified:
             return True
         content = notes.Notes(self.agenda.items(), self.editor.lines())
         try:
-            notes.write(self.folder, content)
+            notes.write(self.folder, content, self._loaded)
         except OSError as error:
             log.warning("notes of %s not saved: %s", self.folder.name, error)
             self._keep_copy(failures.text(error), content)
             return False
+        self._loaded = notes.from_text(notes.to_text(content))
         self._modified = False
         self.failure.hide()
         if self._spare is not None:  # saved in the meeting: the copy is not needed
             with contextlib.suppress(OSError):
                 self._spare.unlink(missing_ok=True)
             self._spare = None
+        self.saved.emit()
         return True
 
     def _keep_copy(self, reason: str, content: notes.Notes) -> None:

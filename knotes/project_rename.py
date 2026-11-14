@@ -9,7 +9,7 @@ import logging
 import pathlib
 from collections.abc import Callable
 
-from knotes import catalog, failures, projects, tasks, transcript
+from knotes import catalog, failures, notebook, projects, tasks, transcript
 from knotes.language import tr
 
 log = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ def rename(recordings: pathlib.Path | None, meetings: list[catalog.Meeting], old
         steps += [
             (recordings / projects.FILE, lambda: projects.rename(recordings, old_value, new_value)),
             (recordings / tasks.FILE, lambda: tasks.rename_project(recordings, old_value, new_value)),
+            (recordings / notebook.FILE, lambda: notebook.rename_project(recordings, old_value, new_value)),
         ]
     try:
         before = {path: _content(path) for path, _ in steps}  # nothing is written if one can't be read

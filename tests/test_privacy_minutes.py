@@ -139,6 +139,30 @@ class TestPrivacyMinutes(unittest.TestCase):
         result = ai_tools.set_task_status(task["ключ"], "готово")
         self.assertEqual((result["ключ"], result["состояние"]), (task["ключ"], "готово"))
 
+    def test_private_notes_excluded_from_model_mcp_and_export(self):
+        from knotes import export
+
+        self.config.hide_personal_data = False
+        personal = "личное напоминание"
+        notes.write(
+            self.folder,
+            notes.Notes(lines=(notes.NoteLine("проверить смету", 8), notes.NoteLine(personal, 12, True))),
+        )
+        self.assertEqual(notes.with_minutes(self.folder), [(8, "проверить смету")])
+        for answer in (
+            ai_tools.get_meeting_notes(self.folder.name),
+            ai_tools.get_protocol_task(self.folder.name),
+            ai_tools.get_transcript(self.folder.name),
+            export.transcript_document(self.folder),
+        ):
+            self.assertNotIn(personal, str(answer))
+        self.assertEqual(ai_tools.search_meetings(personal)["найдено"], [])
+        params = minutes.Params(self.cloud, "к", self.cloud.model, "Инструкция")
+        sent = self._compose(params, "# Итоги")
+        self.assertIn("проверить смету", sent)
+        self.assertNotIn(personal, sent)
+        self.assertEqual(notes.read(self.folder).lines[-1], notes.NoteLine(personal, 12, True))
+
     def test_task_and_project_notes_also_hide_personal_data(self):
         from knotes import projects
 

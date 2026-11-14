@@ -42,7 +42,6 @@ KINDS = {
     catalog.SPEECH: "распознавание",
     catalog.MINUTES_KIND: "протоколы",
 }  # spending kind: the function whose presets know the model
-OUTSIDE_THRESHOLD = 0.005  # under half a cent off the service account is rounding, not spending outside meetings
 
 
 @dataclasses.dataclass(frozen=True)
@@ -215,29 +214,20 @@ def by_kinds(result_: Outcome) -> list[tuple[str, float]]:
     return [(catalog.SPEECH, result_.cost - result_.minutes_list), (catalog.MINUTES_KIND, result_.minutes_list)]
 
 
-def outside_meetings(result_: Outcome, by_account: float | None) -> float:
-    """How much the service account shows spent beyond the meeting spending: checks, other programs on the same
-    key, spending before the log. No account, or it is not bigger: 0."""
-    if by_account is None or by_account - result_.cost < OUTSIDE_THRESHOLD:
-        return 0.0
-    return by_account - result_.cost
-
-
-def models(result_: Outcome, total: float | None = None) -> list[tuple[str, str, float, float]]:
-    """(speech or minutes, model name, how much, share of the whole: of the total spending or of the service
-    account); the kind as in the catalog, untranslated."""
-    total = total or result_.cost
+def models(result_: Outcome) -> list[tuple[str, str, float, float]]:
+    """(kind, model name, cost, share of recorded spending), with the kind as in the catalog."""
+    total = result_.cost
     return [
         (kind, providers.model_title(model, KINDS[kind]) if model else "", how_many, how_many / total)
         for kind, model, how_many in result_.by_models
     ]
 
 
-def arrangement(result_: Outcome, total: float | None = None) -> list[str]:
+def arrangement(result_: Outcome) -> list[str]:
     """A line like "Speech · ElevenLabs Scribe v2 · 0,14 $ · 44%" for each model."""
     return [
         " · ".join(ch for ch in (tr(kind), name, catalog.money(how_many), f"{share:.0%}") if ch)
-        for kind, name, how_many, share in models(result_, total)
+        for kind, name, how_many, share in models(result_)
     ]
 
 

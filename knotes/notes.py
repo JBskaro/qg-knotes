@@ -18,6 +18,8 @@ from knotes.language import tr
 FILE = "заметки.md"
 AGENDA = "## Повестка"
 NOTES = "## Заметки"
+PRIVATE = "🔒"
+PRIVATE_PREFIX = "<!-- knotes:private -->"
 ITEM = re.compile(r"^- \[([ xX])\] (.*)$")
 MINUTE = re.compile(rf"^\[{transcript.TIME}\] ")
 KINDS = ("Решение", "Задача", "Вопрос")  # a line starting "Решение - ..." tells the model which section it goes to
@@ -27,6 +29,16 @@ KINDS = ("Решение", "Задача", "Вопрос")  # a line starting "�
 class NoteLine:
     text: str
     second: int | None = None  # recording minute when the line was started; none after the meeting
+    private: bool = False
+
+    @classmethod
+    def from_body(cls, text: str, second: int | None = None) -> "NoteLine":
+        if PRIVATE not in text:
+            return cls(text, second)
+        return cls(text.replace(f"{PRIVATE} ", "").replace(PRIVATE, ""), second, private=True)
+
+    def body(self) -> str:
+        return f"{PRIVATE} {self.text}" if self.private else self.text
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,6 +51,10 @@ class AgendaItem:
 class Notes:
     agenda: tuple[AgendaItem, ...] = ()
     lines: tuple[NoteLine, ...] = ()
+
+    @property
+    def shared(self) -> tuple[NoteLine, ...]:
+        return tuple(line for line in self.lines if not line.private and line.text.strip())
 
     @property
     def empty(self) -> bool:
@@ -74,7 +90,10 @@ def from_text(text: str) -> Notes:
 
 def _line(text: str) -> NoteLine:
     minute = MINUTE.match(text)
-    return NoteLine(text[minute.end() :] if minute else text, transcript.seconds_list(minute) if minute else None)
+    body = text[minute.end() :] if minute else text
+    private = body.startswith(PRIVATE_PREFIX)
+    text = body[len(PRIVATE_PREFIX) :].removeprefix(" ") if private else body
+    return NoteLine(text, transcript.seconds_list(minute) if minute else None, private)
 
 
 def to_text(notes: Notes) -> str:
@@ -85,10 +104,9 @@ def to_text(notes: Notes) -> str:
         if notes.agenda:
             parts += [AGENDA, "", *(f"- [{'x' if p.discussed else ' '}] {p.text}" for p in notes.agenda), ""]
         parts += [NOTES, ""]
-    parts += [
-        f"[{transcript.time(s.second)}] {s.text}" if s.second is not None and s.text.strip() else s.text
-        for s in notes.lines
-    ]
+    for line in notes.lines:
+        body = f"{PRIVATE_PREFIX} {line.text}" if line.private else line.text
+        parts.append(f"[{transcript.time(line.second)}] {body}" if line.second is not None and body.strip() else body)
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -96,13 +114,18 @@ def read(folder: pathlib.Path) -> Notes:
     """Meeting notes, read only: old one-line "✎" notes stored with the marks come from there until move_old() or the
     next write moves them."""
     file = folder / FILE
-    return from_text(file.read_text(encoding="utf-8")) if file.exists() else Notes(lines=_old_lines(folder))
+    try:
+        return from_text(file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return Notes(lines=_old_lines(folder))
 
 
-def write(folder: pathlib.Path, notes: Notes) -> None:
+def write(folder: pathlib.Path, notes: Notes, previous: Notes | None = None) -> None:
     """Empty notes mean no file. Old notes go from the marks: they are in these notes now."""
     file = folder / FILE
     with transcript.locked(file):
+        if previous is not None and read(folder) != previous:
+            raise OSError(tr("The notes changed in another window. Reopen the meeting to see the saved version."))
         if notes.empty:
             file.unlink(missing_ok=True)
         else:
@@ -133,20 +156,23 @@ def add(folder: pathlib.Path, second: float, text: str) -> None:
 
     def added(lines: list[NoteLine]) -> list[NoteLine]:
         place = next((n for n, s in enumerate(lines) if s.second is not None and s.second > second), len(lines))
-        return [*lines[:place], NoteLine(text.strip(), int(second)), *lines[place:]]  # before the first later line
+        return [*lines[:place], NoteLine(text.strip(), int(second)), *lines[place:]]
 
     _edit_lines(folder, added)
 
 
 def delete(folder: pathlib.Path, second: float, text: str) -> None:
-    _edit_lines(folder, lambda lines: [s for s in lines if (s.second, s.text.strip()) != (int(second), text.strip())])
+    _edit_lines(
+        folder,
+        lambda lines: [s for s in lines if s.private or (s.second, s.text.strip()) != (int(second), text.strip())],
+    )
 
 
 def with_minutes(folder: pathlib.Path) -> list[tuple[int, str]]:
     """Lines with a recording minute, for the transcript: the note takes its place among the phrases. Old notes move
     out of the marks first, so they are not shown twice."""
     move_old(folder)
-    return [(s.second, s.text.strip()) for s in read(folder).lines if s.second is not None and s.text.strip()]
+    return [(s.second, s.text.strip()) for s in read(folder).shared if s.second is not None]
 
 
 def _old_lines(folder: pathlib.Path) -> tuple[NoteLine, ...]:
@@ -177,7 +203,7 @@ def for_model(folder: pathlib.Path) -> list[str]:
             "Повестка встречи (вопросы и темы аналитика; [x] - обсудили)",
             *(f"- [{'x' if p.discussed else ' '}] {p.text}" for p in notes.agenda),
         ]
-    lines = [s for s in notes.lines if s.text.strip()]
+    lines = notes.shared
     if lines:
         result += [
             "",

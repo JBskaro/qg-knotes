@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Left column of the meetings window, like the navigation pane in Windows apps: the "Meetings", "Tasks" and "Summary"
-sections on top, the projects below them, "Settings", "Help" and "Collapse" at the bottom. A section opens on the
-right while the column stays in place; the collapsed column is a strip of icons with a tooltip on hover."""
+"""Navigation for meetings, notebook, tasks and summary. Projects can be selected from the sidebar, including in
+the collapsed icon strip."""
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QPalette
@@ -20,11 +19,12 @@ from knotes.ui import style
 from knotes.language import tr_key, tr
 
 SECTIONS = (
-    ("встречи", style.VIDEO, tr_key("Встречи")),
+    ("блокнот", style.NOTE, tr_key("Notebook")),
     ("задачи", style.TASKS, tr_key("Задачи")),
-    ("сводка", style.CHART, tr_key("Сводка")),
 )
+MEETINGS = (("встречи", style.VIDEO, tr_key("All meetings")),)
 BOTTOM = (
+    ("сводка", style.CHART, tr_key("Сводка")),
     ("настройки", style.SETTINGS, tr_key("Настройки")),
     ("справка", style.HELP, tr_key("Справка")),
     ("свернуть", style.COLLAPSE_PANEL, tr_key("Свернуть")),
@@ -62,14 +62,19 @@ class SidebarPanel(QFrame):
         super().__init__()
         self.section, self.collapsed, self.projects = "встречи", False, projects
         self._counts: dict[str, int] = {}
-        self._top, self._bottom = _SectionList(), _SectionList()
-        for list_, items in ((self._top, SECTIONS), (self._bottom, BOTTOM)):
+        self._top, self._meetings, self._bottom = _SectionList(), _SectionList(), _SectionList()
+        self._groups = ((self._top, SECTIONS), (self._meetings, MEETINGS), (self._bottom, BOTTOM))
+        for list_, items in self._groups:
             for code, _, _ in items:
                 QListWidgetItem(list_).setData(Qt.ItemDataRole.UserRole, code)
             list_.itemClicked.connect(self._clicked_item)
         self._row_label = QLabel(tr("Projects"))
         self._row_label.setObjectName("второй_текст")
         self._plus = style.icon_button(style.PLUS, tr("New project"), self.new_project.emit)
+        tip = tr("Update available")
+        self.update_button = style.icon_button(style.DOWNLOAD, tip)
+        self.update_button.setAccessibleName(tip)
+        self.update_button.hide()
         header = QHBoxLayout()
         header.setContentsMargins(10, 8, 0, 0)
         header.addWidget(self._row_label)
@@ -78,11 +83,12 @@ class SidebarPanel(QFrame):
         column = QVBoxLayout(self)
         column.setContentsMargins(6, 6, 6, 6)
         column.setSpacing(4)
-        for part in (self._top, header, projects, self._bottom):
+        for part in (self._top, header, self._meetings, projects, self.update_button, self._bottom):
             if isinstance(part, QHBoxLayout):
                 column.addLayout(part)
             else:
                 column.addWidget(part, 1 if part is projects else 0)
+        column.setAlignment(self.update_button, Qt.AlignmentFlag.AlignLeft)
         self.setMinimumWidth(COLUMN_WIDTH)
         self.repaint_theme()
         self.select("встречи")
@@ -90,7 +96,7 @@ class SidebarPanel(QFrame):
     def element(self, code: str) -> QListWidgetItem:
         return next(
             list_.item(n)
-            for list_ in (self._top, self._bottom)
+            for list_, _ in self._groups
             for n in range(list_.count())
             if list_.item(n).data(Qt.ItemDataRole.UserRole) == code
         )
@@ -108,12 +114,13 @@ class SidebarPanel(QFrame):
     def select(self, section: str) -> None:
         """Highlight the open section; a page without its own section has no highlight."""
         self.section = section
-        for list_ in (self._top, self._bottom):
+        for list_, _ in self._groups:
             list_.blockSignals(True)
             list_.clearSelection()
             list_.blockSignals(False)
-        if section in {k for k, *_ in (*SECTIONS, *BOTTOM)}:
+        if section in {k for k, *_ in (*SECTIONS, *MEETINGS, *BOTTOM)}:
             self.element(section).setSelected(True)
+        self._label_items()
 
     def set_counts(self, **account: int) -> None:
         """Number of meetings and open tasks next to the sections: "Meetings (7)"."""
@@ -121,7 +128,7 @@ class SidebarPanel(QFrame):
         self._label_items()
 
     def _label_items(self) -> None:
-        for code, _, row_label in (*SECTIONS, *BOTTOM):
+        for code, _, row_label in (*SECTIONS, *MEETINGS, *BOTTOM):
             if code == "свернуть" and self.collapsed:
                 row_label = tr_key("Развернуть")
             text = tr(row_label) + (f"  ({self._counts[code]})" if code in self._counts else "")
@@ -132,7 +139,7 @@ class SidebarPanel(QFrame):
     def repaint_theme(self) -> None:
         """Icons in the theme's text color: redrawn after a theme change."""
         color = self.palette().color(QPalette.ColorRole.WindowText)
-        for code, sign, _ in (*SECTIONS, *BOTTOM):
+        for code, sign, _ in (*SECTIONS, *MEETINGS, *BOTTOM):
             if code == "свернуть" and self.collapsed:
                 sign = style.EXPAND_PANEL
             self.element(code).setIcon(style.icon(sign, color))

@@ -257,6 +257,7 @@ class MeetingView(QWidget):
     recognize = Signal(pathlib.Path)
     meeting_changed = Signal()
     compose_minutes = Signal(pathlib.Path)
+    notes_saved = Signal()
     ask_assistant = Signal(pathlib.Path)  # the minutes by the user's own AI assistant: copy the request to it
     expand = Signal()  # read at full window width: hide or bring back the projects and the list
     closed = Signal()  # the meeting closed: the program forgets it at once, not when Qt deletes the widget
@@ -326,11 +327,14 @@ class MeetingView(QWidget):
         transcript_column.addLayout(self._search_panel())
         transcript_column.addLayout(text_and_participants, 1)
         self.minutes = MinutesView(self.folder, self._minutes_source)
-        self.minutes.compose.connect(lambda: self.compose_minutes.emit(self.folder))
-        self.minutes.ask_assistant.connect(lambda: self.ask_assistant.emit(self.folder))
+        self.minutes.compose.connect(self._compose_with_notes)
+        self.minutes.ask_assistant.connect(self._ask_with_notes)
         self.minutes.to_place.connect(self.show_place)
+        self.minutes.changed.connect(self.meeting_changed)
         self.notepad = Notepad(self.folder)
-        self.notepad.to_place.connect(self.show_place)
+        self.notepad.to_place.connect(self._show_note_place)
+        self.notepad.play_at.connect(self._listen_at_note)
+        self.notepad.saved.connect(self.notes_saved)
         self.contents_ = QStackedWidget()
         self._pages = {MINUTES: self.minutes, NOTES: self.notepad, TRANSCRIPT: self.transcript_panel}
         for page in self._pages.values():
@@ -342,6 +346,14 @@ class MeetingView(QWidget):
             log.warning("meeting %s opens on the minutes, its transcript was not built: %s", self.folder.name, error)
             self.show_tab(MINUTES)
         self.show_participants(False)
+
+    def _compose_with_notes(self) -> None:
+        if not self._save_notes():
+            self.compose_minutes.emit(self.folder)
+
+    def _ask_with_notes(self) -> None:
+        if not self._save_notes():
+            self.ask_assistant.emit(self.folder)
 
     def _closest_tab(self, tab: str) -> str:
         """A meeting not transcribed yet has no transcript: it opens on the minutes, which say to transcribe it
@@ -623,9 +635,11 @@ class MeetingView(QWidget):
     def _delete_label(self, block: dict) -> None:
         """A note is removed from the meeting notepad, a mark from the transcript."""
         if block["метка"].startswith(transcript.NOTE):
-            self.notepad.save()
+            if self._save_notes():
+                return
             notes.delete(self.folder, block["время"], block["метка"].removeprefix(transcript.NOTE))
             self.notepad.load()
+            self.notes_saved.emit()
         else:
             transcript.delete_label(self.folder, block["время"], block["метка"])
         self.refresh()
@@ -635,10 +649,10 @@ class MeetingView(QWidget):
         text, yes = QInputDialog.getText(
             self, tr("Note"), tr("Note at {time}: what matters here", time=transcript.time(seconds))
         )
-        if yes and text.strip():
-            self.notepad.save()
+        if yes and text.strip() and not self._save_notes():
             notes.add(self.folder, seconds, text)
             self.notepad.load()
+            self.notes_saved.emit()
             self.refresh()
 
     # --- participants and marks panel -----------------------------------------------------------------------
@@ -778,7 +792,23 @@ class MeetingView(QWidget):
         self.player.play(self.folder, row.start, self._played_out.emit)
         self.video.play(row.start, player.LENGTH_S)  # frames play along with the phrase sound
 
+    def _show_note_place(self, seconds: float) -> None:
+        if (self.folder / transcript.PHRASES).is_file():
+            self.show_place(seconds)
+        elif (meeting := catalog.meeting(self.folder)) and meeting.has_audio:
+            self._listen_at_note(seconds)
+
+    def _listen_at_note(self, seconds: float) -> None:
+        if self.player.playing:
+            self.player.stop()
+            self.video.stop()
+            self.notepad.review.playing(False)
+            return
+        self.player.play(self.folder, seconds, self._played_out.emit)
+        self.notepad.review.playing(True)
+
     def _playback_end(self, error: str) -> None:
+        self.notepad.review.playing(False)
         self.video.stop()
         self.problem.setText(error)
         self.problem.setVisible(bool(error))
@@ -866,9 +896,17 @@ class MeetingView(QWidget):
     def show_tab(self, name: str) -> None:
         """Keys go to the open tab, not the title field: otherwise stray typing would rename the meeting. Going from
         the notes to the transcript shows the new notes among the phrases."""
-        if name == TRANSCRIPT and self.contents_.currentWidget() is self.notepad:
-            self._save_notes()
-        if name == NOTES:  # during recording this meeting's notes are written in the notepad on top of the windows
+        if name != NOTES and self.contents_.currentWidget() is self.notepad:
+            if self._save_notes():
+                self.tabs.select(NOTES)
+                return
+            if self.player.playing:
+                self.player.stop()
+                self.notepad.review.playing(False)
+        if name == NOTES:
+            if self.contents_.currentWidget() is self.transcript_panel and self.player.playing:
+                self.player.stop()
+                self._playback_end("")
             self.notepad.reload_from_disk()
         if name == TRANSCRIPT:
             self._build_transcript()
@@ -876,7 +914,7 @@ class MeetingView(QWidget):
         changed = self.contents_.currentWidget() is not page
         self.contents_.setCurrentWidget(page)
         self.tabs.select(name)
-        self.setFocusProxy({TRANSCRIPT: self.scroll_area, NOTES: self.notepad.editor}.get(name, self.minutes))
+        self.setFocusProxy({TRANSCRIPT: self.scroll_area, NOTES: self.notepad}.get(name, self.minutes))
         if self.contents_.isVisible():
             self.setFocus()  # arrows and the wheel scroll the open tab
         if changed:
@@ -887,7 +925,9 @@ class MeetingView(QWidget):
         self.show_tab(MINUTES if self.tab() == TRANSCRIPT else TRANSCRIPT)
 
     def _to_search(self) -> None:
-        """Ctrl+F searches the transcript whichever tab it is pressed on."""
+        if self.tab() == NOTES:
+            self.notepad.find()
+            return
         self.show_tab(TRANSCRIPT)
         self.search.setFocus()
 
@@ -918,6 +958,8 @@ class MeetingView(QWidget):
         """A place from the minutes on the transcript tab: the phrase at that time is highlighted (the first one that
         starts no earlier). Back to the minutes with its tab or Ctrl+3, the minutes stay where they were read."""
         self.show_tab(TRANSCRIPT)
+        if self.tab() != TRANSCRIPT:
+            return
         if self._only is not None:
             self._filter_fn(None)
         if not self._phrase_data:
@@ -943,13 +985,12 @@ class MeetingView(QWidget):
     def _save_notes(self) -> str:
         """Saves the notes; why they could not be saved, empty if they were."""
         try:
-            self.notepad.save()
+            return "" if self.notepad.save() else self.notepad.failure.text()
         except OSError as error:
             log.warning("meeting notes not saved: %s", error)
             self.problem.setText(tr("Notes not saved: {reason}", reason=failures.text(error)))
             self.problem.show()
             return failures.text(error)
-        return ""
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """The minutes edit and the notes are saved; what cannot be saved is asked about, not lost silently. The

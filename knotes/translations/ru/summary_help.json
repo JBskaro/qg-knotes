@@ -16,6 +16,8 @@
  "By model": "По моделям",
  "By project": "По проектам",
  "Spent": "Потрачено",
+ "From the local spending journal": "По журналу расходов «Узелка»",
+ "Spent on this key: {amount}": "Потрачено по этому ключу за всё время — {amount}",
  "Previous period": "Прежний такой же период",
  "Start date": "С какого дня",
  "Summary - {name}": "Сводка - {name}",
@@ -30,12 +32,7 @@
  "Previous 3 months": "за 3 месяца до этого",
  "of {total}": "из {total}",
  "on the account, of {total}": "на счете, из {total}",
- "{provider} this month {amount}": "{provider} за месяц {amount}",
- "{provider} for the key {amount}": "{provider} по ключу {amount}",
  "{title} (deleted)": "{title} (удалена)",
- "as in {provider} this month": "как в {provider} за месяц",
- "as in {provider} for the key": "как в {provider} по ключу",
- "meetings {meetings}, outside meetings {outside}": "по встречам {meetings}, вне встреч {outside}",
  "{when}: {how_many}": "{when} {how_many}",
  "Speech is recognized on this computer, free of charge": "Речь распознается на этом компьютере, бесплатно"
 }
