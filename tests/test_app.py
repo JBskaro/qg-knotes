@@ -13,7 +13,7 @@ from unittest import mock
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from knotes import app, catalog, failures, meeting_list, minutes, settings, transcript
+from knotes import app, catalog, failures, meeting_list, minutes, settings, transcript, updates
 from knotes.meeting_list import Busy
 from knotes.ui.meeting_view import MINUTES, NOTES, TRANSCRIPT
 
@@ -41,6 +41,22 @@ def program_for(test: unittest.TestCase) -> app.App:
         timer.stop()
     test.addCleanup(program.window.deleteLater)
     return program
+
+
+class TestUpdateButton(unittest.TestCase):
+    def test_new_release_click_starts_install_without_confirmation(self):
+        program = program_for(self)
+        release = updates.Release("99.0.0", "", "", ())
+        button = program.window.update_button
+        self.assertTrue(button.isHidden())
+        program.updates.offered.emit(release, False)
+        self.assertFalse(button.isHidden())
+        program._notify_with_buttons.assert_not_called()
+        with mock.patch.object(program.updates, "install") as install:
+            button.click()
+        install.assert_called_once_with(release)
+        program.updates.current.emit()
+        self.assertTrue(button.isHidden())
 
 
 class TestStopOnFullDisk(unittest.TestCase):

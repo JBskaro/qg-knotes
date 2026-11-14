@@ -12,7 +12,7 @@ import logging
 import pathlib
 import re
 
-from knotes import catalog, minutes, tasks
+from knotes import catalog, minutes, notes, tasks
 from knotes.language import tr, tr_key
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def read(recordings: pathlib.Path, priced: bool) -> Snapshot:
     meetings = catalog.list_(recordings)
     for meeting in meetings:
         if meeting.status == catalog.READY:
-            minutes_result(meeting.folder)
+            minutes_overview(meeting.folder)
     try:
         open_tasks = sum(z.opened for z in tasks.tasks(recordings, None, meetings))
     except (OSError, ValueError) as error:  # ValueError: minutes not in UTF-8
@@ -69,21 +69,21 @@ def _version(path: pathlib.Path) -> tuple[int, int] | None:
     return info.st_mtime_ns, info.st_size
 
 
-def minutes_result(folder: pathlib.Path) -> str:
-    """minutes.result, read again only when the minutes file changed; unreadable minutes give no summary."""
+def minutes_overview(folder: pathlib.Path) -> tuple[str, bool]:
+    """The result for a meeting row and whether a nonempty minutes file exists."""
     version = _version(folder / minutes.FILE)
     if version is None:
-        return ""
+        return "", False
     known = _summaries.get(folder)
     if known is not None and known[0] == version:
-        return known[1]
+        return known[1], bool(version[1])
     try:
         summary = minutes.result(folder)
     except (OSError, ValueError) as error:
         log.warning("minutes of %s not read: %s", folder.name, error)
         summary = ""
     _summaries[folder] = (version, summary)
-    return summary
+    return summary, bool(version[1])
 
 
 def find(meetings: list[catalog.Meeting], query: str) -> dict[pathlib.Path, int]:
@@ -92,10 +92,11 @@ def find(meetings: list[catalog.Meeting], query: str) -> dict[pathlib.Path, int]
     result = {}
     for meeting in meetings:
         version = _version(meeting.transcript) if meeting.status == catalog.READY else None
-        key = (query, meeting.display_title, meeting.project, meeting.status, version)
+        note_version = _version(meeting.folder / notes.FILE)
+        key = (query, meeting.display_title, meeting.project, meeting.status, version, note_version)
         known = _matches.get(meeting.folder)
         if known is None or known[0] != key:
-            known = (key, _count(meeting, query))
+            known = (key, _count(meeting, query) + note_matches(meeting.folder, query))
             _matches[meeting.folder] = known
         if known[1]:
             result[meeting.folder] = known[1]
@@ -109,3 +110,15 @@ def _count(meeting: catalog.Meeting, query: str) -> int:
         log.warning("transcript of %s not searched: %s", meeting.folder.name, error)
         by_title = dataclasses.replace(meeting, status=catalog.RECORDED)  # only what the list shows
         return catalog.find([by_title], query).get(meeting.folder, 0)
+
+
+def note_matches(folder: pathlib.Path, query: str) -> int:
+    if not (folder / notes.FILE).is_file():
+        return 0
+    try:
+        saved = notes.read(folder)
+    except (OSError, ValueError) as error:
+        log.warning("notes of %s not searched: %s", folder.name, error)
+        return 0
+    text = catalog.for_search(query.strip())
+    return sum(catalog.for_search(s.text).count(text) for s in saved.lines)

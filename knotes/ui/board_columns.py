@@ -49,12 +49,12 @@ def _looks(task: tasks.Task) -> tasks.Task:
 
 class TaskColumn(ViewportList):
     """A board column: a card is dragged here from another column or to another place in this one; click and Enter
-    open the card, Delete archives it."""
+    open the card, Delete asks for confirmation."""
 
     moved_item = Signal(str, str, int)  # task key, this column's key and the place among its shown cards
     menu = Signal(object, QPoint)  # task and where to show its menu
     open_card = Signal(object)  # task
-    to_archive = Signal(object)  # task
+    delete_requested = Signal(object)  # task
     open_place = Signal(object, float)  # source: meeting folder and second
 
     def __init__(self, column: projects.Column):
@@ -200,7 +200,7 @@ class TaskColumn(ViewportList):
         if task and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.open_card.emit(task)
         elif task and event.key() == Qt.Key.Key_Delete:
-            self.to_archive.emit(task)
+            self.delete_requested.emit(task)
         else:
             super().keyPressEvent(event)
 

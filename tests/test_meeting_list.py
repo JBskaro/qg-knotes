@@ -50,18 +50,18 @@ class TestMeetingList(unittest.TestCase):
     def test_minutes_summary_read_once_per_version(self):
         (self.first / minutes.FILE).write_text(MINUTES, encoding="utf-8")
         with mock.patch.object(meeting_list.minutes, "result", wraps=minutes.result) as read:
-            self.assertEqual(meeting_list.minutes_result(self.first), "2 решения · 1 задача")
-            self.assertEqual(meeting_list.minutes_result(self.first), "2 решения · 1 задача")
+            self.assertEqual(meeting_list.minutes_overview(self.first), ("2 решения · 1 задача", True))
+            self.assertEqual(meeting_list.minutes_overview(self.first), ("2 решения · 1 задача", True))
             self.assertEqual(read.call_count, 1)
             (self.first / minutes.FILE).write_text(MINUTES + "2. Еще. Анна.\n", encoding="utf-8")
-            self.assertEqual(meeting_list.minutes_result(self.first), "2 решения · 2 задачи")
-        self.assertEqual(meeting_list.minutes_result(self.second), "")  # no minutes
+            self.assertEqual(meeting_list.minutes_overview(self.first), ("2 решения · 2 задачи", True))
+        self.assertEqual(meeting_list.minutes_overview(self.second), ("", False))
 
     def test_unreadable_minutes_give_no_summary(self):
         """Minutes saved in ANSI by another editor: the row goes without the summary, the list is not cut off."""
         (self.first / minutes.FILE).write_bytes("# Итоги\n\n## Решения\n\n1. Цена.\n".encode("cp1251"))
         with self.assertLogs(meeting_list.log, "WARNING"):
-            self.assertEqual(meeting_list.minutes_result(self.first), "")
+            self.assertEqual(meeting_list.minutes_overview(self.first), ("", True))
 
     def test_search_reads_a_transcript_again_only_when_it_changed(self):
         meetings = catalog.list_(self.recordings)

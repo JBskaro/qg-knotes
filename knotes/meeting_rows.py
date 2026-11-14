@@ -44,6 +44,7 @@ class MeetingItem:
     price: float | None = None
     found: int = 0
     result: str = ""  # of the minutes: "3 decisions · 5 tasks"
+    has_minutes: bool = False
 
     @property
     def status(self) -> tuple[str, str]:
@@ -64,6 +65,12 @@ class MeetingItem:
     def recognizable(self) -> bool:
         return not self.occupied and self.meeting.has_audio and self.meeting.status != catalog.INTERRUPTED
 
+    @property
+    def needs_processing(self) -> bool:
+        if self.meeting.status == catalog.READY:
+            return not self.has_minutes
+        return self.recognizable
+
 
 def items(
     meetings: list[catalog.Meeting],
@@ -72,16 +79,20 @@ def items(
     price_per_second: float | None,
 ) -> list[MeetingItem]:
     """Rows of the meetings; for busy ones, what the program is doing with them now ("Recording", "Transcribing")."""
-    return [
-        MeetingItem(
-            v,
-            busy_items.get(v.folder),
-            progress.get(v.folder),
-            price_per_second * v.seconds * TRACK_COUNT if price_per_second and v.seconds else None,
-            result=meeting_list.minutes_result(v.folder) if v.status == catalog.READY else "",
+    rows = []
+    for v in meetings:
+        result, has_minutes = meeting_list.minutes_overview(v.folder) if v.status == catalog.READY else ("", False)
+        rows.append(
+            MeetingItem(
+                v,
+                busy_items.get(v.folder),
+                progress.get(v.folder),
+                price_per_second * v.seconds * TRACK_COUNT if price_per_second and v.seconds else None,
+                result=result,
+                has_minutes=has_minutes,
+            )
         )
-        for v in meetings
-    ]
+    return rows
 
 
 def with_progress(rows: list[MeetingItem], folder: pathlib.Path, progress: Progress) -> list[MeetingItem]:

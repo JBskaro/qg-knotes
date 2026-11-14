@@ -38,7 +38,7 @@ class TestUpdates(unittest.TestCase):
         self.started: list[bool] = []
         self.flow.notice.connect(lambda heading, _text: self.notices.append(heading))
         self.flow.checked.connect(self.checked.append)
-        self.flow.offered.connect(lambda release_, point: self.offered.append((release_.version, point)))
+        self.flow.offered.connect(lambda release_, manual: self.offered.append((release_.version, manual)))
         self.flow.started.connect(lambda: self.started.append(True))
         for patch in (
             mock.patch.object(update_flow, "run_in_background", at_once),
@@ -69,7 +69,7 @@ class TestUpdates(unittest.TestCase):
         with self._latest(release("99.0.0", "\n - Заметки встречи\n- Другое")):
             self.flow.check(settings.Settings(updates_checked=today), manual=True)
         self.assertEqual(self.checked, [""])
-        self.assertEqual(self.offered, [("99.0.0", "Заметки встречи")])
+        self.assertEqual(self.offered, [("99.0.0", True)])
 
     def test_pending_release_is_checked_again_after_restart(self):
         config = settings.Settings()
@@ -79,7 +79,7 @@ class TestUpdates(unittest.TestCase):
             restarted = update_flow.Updates(lambda: False)
             restarted.check(dataclasses.replace(config, updates_checked=self.checked[-1]))
         self.assertEqual(latest.call_count, 2)
-        self.assertEqual(self.offered, [("99.0.0", "")])
+        self.assertEqual(self.offered, [("99.0.0", False)])
 
     def test_what_a_manual_check_tells(self):
         """Without a newer release, or without an answer, a check from the tray menu says so; by itself it is

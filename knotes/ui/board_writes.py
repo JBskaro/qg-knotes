@@ -32,7 +32,10 @@ def safely(parent_: QWidget, action: Callable[[], object]) -> bool:
 
 
 def delete_task(parent_: QWidget, recordings: pathlib.Path, task: tasks.Task) -> bool:
-    """Deletes an own task after confirmation; True if it was deleted."""
-    if not style.ask(parent_, language.tr("Delete task"), language.tr("Delete task “{text}”?", text=task.text)):
+    """Delete a card after confirmation, keeping the original minutes item."""
+    message = language.tr("Delete task “{text}”?", text=task.text)
+    if not task.custom:
+        message += "\n\n" + language.tr("The item will stay in the minutes.")
+    if not style.ask(parent_, language.tr("Delete task"), message, warning=True):
         return False
     return safely(parent_, lambda: tasks.delete(recordings, task.key))

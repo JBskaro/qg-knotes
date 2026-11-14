@@ -367,8 +367,7 @@ def get_meeting_notes(meeting: str) -> dict:
             "повестка": [{"пункт": p.text, "обсудили": p.discussed} for p in notepad.agenda],
             "строки": [
                 {"время": transcript.time(s.second) if s.second is not None else None, "текст": s.text}
-                for s in notepad.lines
-                if s.text.strip()
+                for s in notepad.shared
             ],
         },
     )
@@ -498,7 +497,7 @@ def update_protocol(meeting: str, text: str) -> dict:
     found = _meeting(meeting)
     with transcript.locked(found.folder / minutes.FILE):
         _save_previous(found.folder)
-        transcript.write_text(found.folder / minutes.FILE, privacy.restored(found.folder, text).rstrip() + "\n")
+        minutes.write_draft(found.folder, privacy.restored(found.folder, text).rstrip() + "\n")
     return _hidden(found.folder, _card(found))
 
 

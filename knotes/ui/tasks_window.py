@@ -181,7 +181,7 @@ class TasksWindow(QWidget):
         col.moved_item.connect(self._move)
         col.menu.connect(lambda task, where: self._task_menu(task).exec(where))
         col.open_card.connect(self.open_task)
-        col.to_archive.connect(self._to_archive)
+        col.delete_requested.connect(self._delete)
         col.open_place.connect(self.open_place)
         field = AddField(key, language.tr("+  Add task"))
         field.add.connect(self._quick_add)
@@ -446,12 +446,10 @@ class TasksWindow(QWidget):
 
     def _delete(self, task: tasks.Task) -> None:
         if delete_task(self, self.recordings, task):
+            self._saved_cards.pop(task.key, None)
+            if self.panel.key() == task.key:
+                self.panel.discard()
             self._after_edit(task.key)
-
-    def _to_archive(self, task: tasks.Task) -> None:
-        """Delete on a card archives it; in the archive it does nothing."""
-        if not task.archive:
-            self._edit(task, tasks.Edit(archive=True))
 
     def _status_menu(self, menu: QMenu, task: tasks.Task) -> None:
         """The columns of the project board, on the board of all projects the three states."""
@@ -513,8 +511,7 @@ class TasksWindow(QWidget):
             language.tr("Restore from archive") if task.archive else language.tr("В архив"),
             lambda: edit(archive=not task.archive),
         )
-        if task.custom:
-            menu.addAction(language.tr("Delete…"), lambda: self._delete(task))
+        menu.addAction(language.tr("Delete…"), lambda: self._delete(task))
         return menu
 
     def _new_label(self, task: tasks.Task) -> None:

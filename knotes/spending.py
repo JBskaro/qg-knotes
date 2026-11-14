@@ -6,6 +6,7 @@ import dataclasses
 import datetime
 import json
 import logging
+import math
 import pathlib
 
 from knotes import catalog, disk_names, transcript
@@ -47,16 +48,19 @@ def _to_line(expense: Expense) -> str:
 def _from_line(line: str) -> Expense | None:
     try:
         fields = json.loads(line)
+        kind, amount = fields["вид"], float(fields["сколько"])
+        if kind not in (catalog.SPEECH, catalog.MINUTES_KIND) or not math.isfinite(amount) or amount <= 0:
+            raise ValueError("invalid expense")
         return Expense(
             datetime.datetime.fromisoformat(fields["когда"]),
             str(fields["встреча"]),
-            str(fields["вид"]),
+            kind,
             str(fields.get("модель", "")),
-            float(fields["сколько"]),
+            amount,
             str(fields.get("проект", "")),
             str(fields.get("название", "")),
         )
-    except (ValueError, KeyError, TypeError):  # a cut-off write or a manual edit: the other expenses are intact
+    except (ValueError, KeyError, TypeError, OverflowError):
         log.warning("skipped a broken line of the spending log")
         return None
 
@@ -65,24 +69,26 @@ def list_(recordings: pathlib.Path, meetings: list[catalog.Meeting]) -> list[Exp
     """All expenses of a recordings folder; project and title as the meeting has them now, for a deleted one as of
     the expense. No log yet: expenses by the meeting prices."""
     path = recordings / FILE
-    if not path.exists():
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
         return from_meetings(meetings)
     exists = {v.folder.name: v for v in meetings}
     result = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in lines:
         expense = _from_line(line) if line.strip() else None
         if expense is None:
             continue
         if (meeting := exists.get(expense.meeting)) is not None:
             expense = dataclasses.replace(expense, project=meeting.project, title=meeting.custom_title)
         result.append(expense)
-    return result
+    return result or from_meetings(meetings)
 
 
 def write(folder: pathlib.Path, kind: str, model: str, how_many: float, when: datetime.datetime | None = None) -> None:
     """Writes a meeting expense to the log of its recordings folder. The first expense starts the log with the prices
     already saved in the meetings, so write it before the new price goes into the meeting."""
-    if how_many <= 0:
+    if not math.isfinite(how_many) or how_many <= 0:
         return
     properties = catalog.properties(folder)
     title = properties.get("название", "")
@@ -98,12 +104,15 @@ def add(recordings: pathlib.Path, expense: Expense) -> None:
     """An expense to the log; one of no meeting (the meeting prep) has an empty meeting and its own title. Under the
     folder lock: the window's background threads and the MCP server append one at a time, and the log is started
     once."""
-    if expense.how_many <= 0:
+    if not math.isfinite(expense.how_many) or expense.how_many <= 0:
         return
     path = recordings / FILE
     path.parent.mkdir(exist_ok=True)
-    start = [] if path.exists() else from_meetings(catalog.list_(recordings))  # before the lock: it reads every meeting
     with transcript.locked(path):
-        previous_items = [] if path.exists() else start
-        with path.open("a", encoding="utf-8") as file:
-            file.write("".join(_to_line(tr) + "\n" for tr in [*previous_items, expense]))
+        content = path.read_text(encoding="utf-8") if path.exists() else ""
+        if not any(_from_line(line) for line in content.splitlines() if line.strip()):
+            previous = from_meetings(catalog.list_(recordings))
+            content = "".join(_to_line(item) + "\n" for item in previous)
+        if content and not content.endswith("\n"):
+            content += "\n"
+        transcript.write_text(path, content + _to_line(expense) + "\n")

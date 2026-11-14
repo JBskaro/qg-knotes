@@ -90,44 +90,21 @@ class TestSummaryWindow(unittest.TestCase):
         self.window.display()  # after a recount the rows start from the first again
         self.assertEqual(self.window._models.itemAtPosition(0, 0).widget().text(), "Речь · ElevenLabs Scribe v2")
 
-    @staticmethod
-    def _lines(grid_layout) -> list[tuple[str, str]]:
-        """Breakdown rows: (name, total on the right)."""
-        return [
-            (grid_layout.itemAtPosition(r, 0).widget().text(), grid_layout.itemAtPosition(r, 2).widget().text())
-            for r in range(grid_layout.rowCount())
-            if grid_layout.itemAtPosition(r, 2)
-        ]
-
-    def test_spent_like_provider_and_difference_as_outside_row(self):
-        """The "Spent" tile shows what went from the key by the OpenRouter account; what is not for this program's
-        meetings (checks, other programs on the same key) is an "Outside meetings" row in the breakdowns and
-        the table: everything adds up to the tile."""
+    def test_spent_is_stable_when_provider_replies_or_fails(self):
         tile, filters = self.window.tiles[0], self.window.filters
-        self.window._show_balance(providers.Balance(8.52, 10.0, "ключ", 1.48, 2.0))
-        self.assertEqual(tile.value.text(), "1,48 $")
-        self.assertIn("как в OpenRouter за месяц", tile.hint.text())
-        self.assertIn("по встречам 0,50 $, вне встреч 0,98 $", tile.hint.text())
-        self.assertEqual(self._lines(self.window._models)[-1], ("Вне встреч", "0,98 $ · 66%"))
-        self.assertEqual(self._lines(self.window._models)[0], ("Речь · ElevenLabs Scribe v2", "0,20 $ · 14%"))
-        self.assertEqual(self._lines(self.window._projects)[-1], ("Вне встреч", "0,98 $"))
-        table = self.window.by_meetings
-        outside = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "Вне встреч")
-        self.assertEqual(table.item(outside, 5).text(), "0,98 $")
-        filters._pick_project("Склад")  # the service does not count by project
-        self.assertEqual(tile.value.text(), "0,10 $")
-        self.assertNotIn("Вне встреч", [name for name, _ in self._lines(self.window._models)])
-        filters._pick_project(None)
-        filters._pick_period(summary.ALL)
-        self.assertEqual(tile.value.text(), "2,00 $")
-        self.assertIn("как в OpenRouter по ключу", tile.hint.text())
-        filters._pick_period(summary.MONTH, 1)  # the service does not report the previous month
-        self.assertNotIn("OpenRouter", tile.hint.text())
-        filters._pick_period(summary.MONTH)
-        self.window._show_balance(providers.Balance(9.6, 10.0, "ключ", 0.40, 0.40))  # service shows less: a new key
         self.assertEqual(tile.value.text(), "0,50 $")
-        self.assertIn("OpenRouter за месяц 0,40 $", tile.hint.text())
-        self.assertNotIn("Вне встреч", [name for name, _ in self._lines(self.window._models)])
+        filters._pick_period(summary.ALL)
+        self.window._show_balance(providers.Balance(8.52, 10.0, "ключ", 1.48, 2.0))
+        self.assertEqual(tile.value.text(), "0,50 $")
+        self.assertIn("2,00 $", self.window.tiles[3].hint.text())
+        self.window._show_balance(providers.ProviderError("Недоступно"))
+        self.assertEqual(tile.value.text(), "0,50 $")
+        filters._pick_project("Склад")
+        self.assertEqual(tile.value.text(), "0,10 $")
+        filters._pick_project("Пустой")
+        self.assertEqual(tile.value.text(), "0 $")
+        filters._pick_project(None)
+        self.assertEqual(tile.value.text(), "0,50 $")
 
     def test_per_meeting_prices_and_models(self):
         """Prices and models of each meeting only here; a double click on a row opens the meeting."""
@@ -156,9 +133,8 @@ class TestSummaryWindow(unittest.TestCase):
             self.addCleanup(window.close)
             window.display()  # as the app does right after opening
             window._show_balance(providers.Balance(8.52, 10.0, "ключ", 1.48, 2.0))
-            window._balance_tile()
         self.assertEqual((meetings.call_count, log_.call_count, charts.call_count), (1, 1, 1))
-        self.assertEqual(window.tiles[0].value.text(), "1,48 $")
+        self.assertEqual(window.tiles[0].value.text(), "0,50 $")
 
     def test_typed_dates_counted_once_they_stop(self):
         filters = self.window.filters
@@ -178,7 +154,7 @@ class TestSummaryWindow(unittest.TestCase):
         self.window.filters._pick_project(None)
         header = table.horizontalHeader()
         self.assertEqual((header.sortIndicatorSection(), header.sortIndicatorOrder()), (5, Qt.SortOrder.AscendingOrder))
-        self.assertEqual(table.item(table.rowCount() - 1, 0).text(), "Вне встреч")  # the largest sum is last
+        self.assertEqual(table.item(table.rowCount() - 1, 5).text(), "0,40 $")
 
     def test_money_and_numbers_in_english(self):
         try:

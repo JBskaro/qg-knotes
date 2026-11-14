@@ -9,11 +9,6 @@ import datetime
 from knotes import catalog, failures, language, providers, spending, summary
 from knotes.language import tr, tr_key
 
-OUTSIDE = tr_key("Вне встреч")  # breakdown and table row: the service account beyond meeting spending
-OUTSIDE_HINT = tr_key(
-    "Сколько ушло с ключа сверх трат по встречам этой программы: проверки и другие программы на "
-    "том же ключе, траты до журнала трат"
-)
 CHART_TITLES = {
     "дням": (tr_key("Расходы по дням"), tr_key("Часы встреч по дням")),  # chart step -> headings
     "неделям": (tr_key("Расходы по неделям"), tr_key("Часы встреч по неделям")),
@@ -94,8 +89,7 @@ Bars = list[tuple[str, tuple[float, ...]]]  # chart bars: the caption and the pa
 
 @dataclasses.dataclass(frozen=True)
 class Report:
-    """The summary for one selection. The key balance is not in it: the service account changes only "Spent" and
-    the spending outside meetings, see spending()."""
+    """The summary for one selection, calculated from the local spending journal."""
 
     selection: Selection
     result: summary.Outcome
@@ -167,16 +161,8 @@ class Line:
     quiet: bool = False
 
 
-def _outside_line(outside: float, total: float | None = None) -> Line:
-    """The last breakdown row: key spending outside meetings; total if a share of the account is needed."""
-    figure = money(outside) + (f" · {outside / total:.0%}" if total else "")
-    return Line(
-        name=tr(OUTSIDE), share=outside / total if total else 0, figure=figure, tooltip=tr(OUTSIDE_HINT), quiet=True
-    )
-
-
-def project_lines(projects: list[summary.Project], outside: float = 0.0) -> list[Line]:
-    """Projects by hours, the strip is the share of the longest one; spending outside meetings at the end."""
+def project_lines(projects: list[summary.Project]) -> list[Line]:
+    """Projects by hours, with the strip relative to the longest one."""
     largest = max((p.result.seconds for p in projects), default=0) or 1
     lines = []
     for p in projects:
@@ -200,14 +186,13 @@ def project_lines(projects: list[summary.Project], outside: float = 0.0) -> list
                 quiet=without,
             )
         )
-    return lines + ([_outside_line(outside)] if outside else [])
+    return lines
 
 
-def model_lines(result: summary.Outcome, outside: float = 0.0) -> list[Line]:
-    """Models for the period: what the money went on and its share of the whole account; spending outside meetings
-    is a gray row at the end."""
-    kinds, total = list(summary.KINDS), result.cost + outside
-    lines = [
+def model_lines(result: summary.Outcome) -> list[Line]:
+    """Models for the period and their shares of the recorded spending."""
+    kinds = list(summary.KINDS)
+    return [
         Line(
             name=" · ".join(ch for ch in (tr(kind), name) if ch),
             share=share,
@@ -215,66 +200,13 @@ def model_lines(result: summary.Outcome, outside: float = 0.0) -> list[Line]:
             tooltip=line,
             kind=kinds.index(kind),
         )
-        for (kind, name, how_many, share), line in zip(
-            summary.models(result, total), summary.arrangement(result, total), strict=True
-        )
+        for (kind, name, how_many, share), line in zip(summary.models(result), summary.arrangement(result), strict=True)
     ]
-    return lines + ([_outside_line(outside, total)] if outside else [])
 
 
-@dataclasses.dataclass(frozen=True)
-class Spending:
-    """What the key balance changes: "Spent", the spending outside meetings and the breakdowns that show it."""
-
-    spent: Figure
-    outside: float
-    projects: list[Line]
-    models: list[Line]
-
-
-def by_account(selection: Selection, balance: providers.Balance | None) -> tuple[bool, float] | None:
-    """The service's account for the key for the selection: (this month or all time, how much). The service does
-    not count by project or for past periods."""
-    if balance is None or selection.project is not None or selection.shift:
-        return None
-    if selection.kind == summary.MONTH and balance.for_month is not None:
-        return True, balance.for_month
-    if selection.kind == summary.ALL and balance.by_key is not None:
-        return False, balance.by_key
-    return None
-
-
-def _account_lines(result: summary.Outcome, outside: float, account: tuple[bool, float], provider: str) -> list[str]:
-    """Where "Spent" comes from: the service account with the meetings' share, or, if it is not above meeting
-    spending, the account alone."""
-    this_month, amount = account
-    if outside:
-        return [
-            tr("as in {provider} this month", provider=provider)
-            if this_month
-            else tr("as in {provider} for the key", provider=provider),
-            tr("meetings {meetings}, outside meetings {outside}", meetings=money(result.cost), outside=money(outside)),
-        ]
-    if this_month:
-        return [tr("{provider} this month {amount}", provider=provider, amount=money(amount))]
-    return [tr("{provider} for the key {amount}", provider=provider, amount=money(amount))]
-
-
-def spending(report_: Report, balance: providers.Balance | None, provider: str, error: str = "") -> Spending:
-    """The "Spent" tile is what went from the key by the service account when it covers the selection, else the
-    meeting spending; its hint: the previous period, where the figure comes from, why the spending log was not read
-    (error)."""
-    result = report_.result
-    account = by_account(report_.selection, balance)
-    outside = summary.outside_meetings(result, account[1] if account else None)
-    lines = _account_lines(result, outside, account, provider) if account else []
-    hint = "\n".join(ch for ch in (report_.before, *lines, error) if ch)
-    return Spending(
-        spent=Figure(money(result.cost + outside), hint),
-        outside=outside,
-        projects=project_lines(report_.projects, outside),
-        models=model_lines(result, outside),
-    )
+def spent_figure(report_: Report, error: str = "") -> Figure:
+    hint = "\n".join(filter(None, (tr("From the local spending journal"), report_.before, error)))
+    return Figure(money(report_.result.cost), hint)
 
 
 def balance_figure(balance: object, provider: str, meetings: list[catalog.Meeting]) -> Figure:
@@ -294,4 +226,6 @@ def balance_figure(balance: object, provider: str, meetings: list[catalog.Meetin
         if hours
         else source_of
     )
+    if balance.by_key is not None:
+        hint += "\n" + tr("Spent on this key: {amount}", amount=money(balance.by_key))
     return Figure(catalog.money(balance.remaining), hint, balance.remaining / balance.total if balance.total else 0)

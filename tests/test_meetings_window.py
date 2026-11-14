@@ -12,16 +12,19 @@ from unittest import mock
 
 import shiboken6
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QResizeEvent
+from PySide6.QtGui import QResizeEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox, QPushButton, QWidget
 
-from knotes import catalog, projects, minutes, transcript, kinds, meeting_rows, tasks
+from knotes import catalog, projects, minutes, notebook, notes, transcript, kinds, meeting_rows, tasks
 from knotes.meeting_list import Busy
 from knotes.ui import help_page, meetings_window, meeting_view, projects_panel
 from knotes.ui import style
 from knotes.ui.meetings_window import MeetingsWindow
 from knotes.ui.meeting_view import MeetingView
+from knotes.ui.notebook_editor import BOLD, NUMBER, link_url
+from knotes.ui.notebook_page import NotebookPage
+from knotes.ui.tasks_window import TasksWindow
 
 app = QApplication.instance() or QApplication([])
 MINUTES = "# Итоги\n\n## Решения\n\n1. А.\n2. Б.\n3. В.\n\n## Задачи\n\n1. Г.\n\n## Открытые вопросы\n\n1. Д.\n2. Е.\n"
@@ -54,11 +57,29 @@ class TestMeetingsList(unittest.TestCase):
         self.window.update_requested.connect(lambda: clicks.append(True))
         self.window.show_update("99.0.0")
         self.assertTrue(self.window.update_button.isVisible())
-        self.assertIn("99.0.0", self.window.update_button.toolTip())
+        self.assertEqual(self.window.update_button.toolTip(), "Доступно обновление")
+        self.assertIs(self.window.update_button.parentWidget(), self.window.projects_column)
+        self.assertLess(
+            self.window.update_button.y(), self.window.projects_column.element("настройки").listWidget().y()
+        )
         self.window.update_button.click()
         self.assertEqual(clicks, [True])
         self.window.show_update("")
         self.assertFalse(self.window.update_button.isVisible())
+
+    def test_global_search_opens_note_matches_and_updates_after_edit(self):
+        opened = []
+        self.window.find_notes.connect(lambda folder, query: opened.append((folder, query)))
+        notes.write(self.recorded, notes.Notes(lines=(notes.NoteLine("Личная ёлка", private=True),)))
+        self.window.search.setText("елка")
+        self.window._show_items()
+        self._click(self.recorded)
+        self.assertEqual(opened, [(self.recorded, "елка")])
+        notes.write(self.recorded, notes.Notes(lines=(notes.NoteLine("Другой текст"),)))
+        self.window.refresh_notes_search()
+        self.window._show_items()
+        self.assertFalse(self.window._matches([catalog.meeting(self.recorded)], "елка"))
+        self.window._search_delay.stop()
 
     def _meeting(self, name: str, minutes_text: str = "") -> pathlib.Path:
         folder = self.recordings / name
@@ -137,7 +158,7 @@ class TestMeetingsList(unittest.TestCase):
 
     def test_left_sections_open_in_place_and_column_stays(self):
         """Tasks, summary, settings and help open to the right of the sections column, not over the whole window with
-        a way back; the selected section is highlighted, a project on the left filters the board's tasks."""
+        a way back; the selected section is highlighted."""
         sections, opened_all = self.window.projects_column, []
         for chime, name in (
             (self.window.tasks, "задачи"),
@@ -146,7 +167,9 @@ class TestMeetingsList(unittest.TestCase):
             (self.window.help_page, "справка"),
         ):
             chime.connect(lambda *p, i=name: opened_all.append((i, *p)))
-        self.assertTrue(sections.element("встречи").text().startswith("Встречи"))
+        meetings = sections.element("встречи")
+        self.assertTrue(meetings.text().startswith("Все встречи"))
+        self.assertIsNot(meetings.listWidget(), sections.element("блокнот").listWidget())
         self.assertEqual(sections.section, "встречи")
         for section in ("задачи", "сводка", "настройки", "справка"):
             self._section(section)
@@ -158,8 +181,6 @@ class TestMeetingsList(unittest.TestCase):
         )
         self.assertNotIn("Все встречи", [k.text() for k in self.window.findChildren(QPushButton)])
         self.assertIn("Задачи", self.window.windowTitle())
-        self.window.panel.setCurrentRow(1)  # project "Склад": the board reopens, filtered by it
-        self.assertEqual(opened_all[-1], ("задачи", "Склад"))
         self._section("встречи")
         self.assertEqual(
             (self.window.page, self.window.meetings_column.isVisible(), sections.section), (None, True, "встречи")
@@ -167,9 +188,11 @@ class TestMeetingsList(unittest.TestCase):
 
     def _click_project(self, code: str | None) -> None:
         panel = self.window.panel
-        key = projects_panel.ALL if code is None else code
+        if code is None:
+            self._section("встречи")
+            return
         element = next(
-            panel.item(n) for n in range(panel.count()) if panel.item(n).data(Qt.ItemDataRole.UserRole) == key
+            panel.item(n) for n in range(panel.count()) if panel.item(n).data(Qt.ItemDataRole.UserRole) == code
         )
         QTest.mouseClick(
             panel.viewport(),
@@ -177,6 +200,125 @@ class TestMeetingsList(unittest.TestCase):
             Qt.KeyboardModifier.NoModifier,
             panel.visualItemRect(element).center(),
         )
+
+    def test_notebook_filter_saves_the_editor_and_is_independent_of_meetings(self):
+        notebook.save(self.recordings, notebook.Note(title="Склад", project="Склад"), notebook.Note())
+        notebook.save(self.recordings, notebook.Note(title="Личное"), notebook.Note())
+        self._click_project("Склад")
+        page = NotebookPage(self.recordings, ["Склад"])
+        self.window.show_page(page, "Блокнот", "блокнот")
+        app.processEvents()
+        self.assertEqual(page.list_.count(), 2)
+        page.project_button.menu().actions()[1].trigger()
+        self.assertIs(self.window.page, page)
+        self.assertTrue(self.window.projects_column.element("блокнот").isSelected())
+        self.assertFalse(self.window.panel.selectedItems())
+        self.assertEqual((page.project_button.text(), page.list_.count(), page.title.text()), ("Склад", 1, "Склад"))
+        page.body.insertPlainText("Вопросы")
+        page.heading.menu().actions()[2].trigger()
+        self.assertEqual(page.body.toPlainText(), "Вопросы")
+        self.assertEqual(page.body.textCursor().blockFormat().headingLevel(), 2)
+        QTest.keyClick(page.body, Qt.Key.Key_Return)
+        page.body.insertPlainText("Текст")
+        page.project_button.menu().actions()[-1].trigger()
+        self.assertEqual((page.project_button.text(), page.title.text()), ("Без проекта", "Личное"))
+        page.project_button.menu().actions()[1].trigger()
+        self.assertEqual(page.body.source(), "## Вопросы\n\nТекст")
+        self.assertEqual(page.body.toPlainText(), "Вопросы\nТекст")
+        self._section("блокнот")
+        self.assertEqual(page.project_button.text(), "Склад")
+        page.project_button.menu().actions()[0].trigger()
+        self.assertEqual(page.list_.count(), 2)
+        self._click_project("Склад")
+        self.assertIsNone(self.window.page)
+        self.assertEqual(self.window.project, "Склад")
+
+    def test_notebook_delete_targets_the_clicked_note_and_keeps_other_edits(self):
+        first = notebook.save(self.recordings, notebook.Note(title="Первая"), notebook.Note())
+        second = notebook.save(self.recordings, notebook.Note(title="Вторая", pinned=True), notebook.Note())
+        page = NotebookPage(self.recordings, [])
+        self.addCleanup(page.close)
+        page.title.setText("Правка второй")
+        with mock.patch.object(style, "ask", return_value=False):
+            page._delete(first)
+        self.assertEqual(notebook.list_(self.recordings), [second, first])
+        with mock.patch.object(style, "ask", return_value=True):
+            page._delete(first)
+            self.assertEqual(page.title.text(), "Правка второй")
+            self.assertTrue(page.save())
+            stale = notebook.list_(self.recordings)[0]
+            self.assertEqual(stale.title, "Правка второй")
+            updated = notebook.save(self.recordings, dataclasses.replace(stale, title="Новая правка"), stale)
+            with mock.patch.object(QMessageBox, "warning") as warning:
+                page._delete(stale)
+            warning.assert_called_once()
+            self.assertEqual(notebook.list_(self.recordings), [updated])
+            page._open(updated)
+            page.title.setText("Не сохранять удалённую заметку")
+            page._delete(updated)
+        self.assertTrue(page.save())
+        self.assertEqual(notebook.list_(self.recordings), [])
+
+    def test_notebook_restores_project_note_and_cursor_after_close(self):
+        note = notebook.save(
+            self.recordings,
+            notebook.Note(title="План", text="Первый абзац\nВторой абзац", project="Склад"),
+            notebook.Note(),
+        )
+        notebook.save(self.recordings, notebook.Note(title="Другая", project="Склад"), notebook.Note())
+        page = NotebookPage(self.recordings, ["Склад"])
+        page.project_button.menu().actions()[1].trigger()
+        page._open(note)
+        cursor = page.body.textCursor()
+        cursor.setPosition(15)
+        page.body.setTextCursor(cursor)
+        self.assertTrue(page.close())
+        reopened = NotebookPage(self.recordings, ["Склад"])
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.project_button.text(), "Склад")
+        self.assertEqual(reopened.title.text(), "План")
+        self.assertEqual(reopened.body.textCursor().position(), 15)
+
+    def test_pending_filter_updates_when_minutes_are_written(self):
+        def visible():
+            return {v.meeting.folder for n in range(self.window.list_.count()) if (v := self._data(n))}
+
+        self.window.pending_only.click()
+        self.assertEqual(visible(), {self.no_minutes, self.recorded})
+        (self.no_minutes / minutes.FILE).write_text("# Итоги\n", encoding="utf-8")
+        self.window.show_meetings(catalog.list_(self.recordings), {}, {}, None)
+        self.assertEqual(visible(), {self.recorded})
+        self.window.pending_only.click()
+        self.assertEqual(visible(), {self.ready_one, self.no_minutes, self.recorded})
+
+    def test_notebook_formatting_and_table_survive_reopen(self):
+        legacy = notebook.Note(title="Заметка", text="Ссылка\n\n\nПолужирный текст")
+        saved = notebook.save(self.recordings, legacy, notebook.Note())
+        page = NotebookPage(self.recordings, [])
+        self.addCleanup(page.close)
+        self.assertTrue(page.save())
+        self.assertEqual(notebook.list_(self.recordings), [saved])
+        editor = page.body
+        self.assertTrue(editor.find("Ссылка"))
+        page._format(editor.set_link, link_url("https://example.org"))
+        self.assertTrue(editor.find("Полужирный текст"))
+        page._styles[BOLD].click()
+        page._format(editor.set_list, NUMBER)
+        editor.moveCursor(QTextCursor.MoveOperation.End)
+        page._format(editor.insert_table, 2, 2)
+        editor.insertPlainText("Срок")
+        page._format(editor.edit_table, "col+")
+        self.assertTrue(page.save())
+        reopened = NotebookPage(self.recordings, [])
+        self.addCleanup(reopened.close)
+        self.assertIn("**Полужирный текст**", reopened.body.source())
+        self.assertIn("[Ссылка](https://example.org)", reopened.body.source())
+        self.assertIn("Ссылка\n\n\nПолужирный текст", reopened.body.toPlainText())
+        self.assertTrue(reopened.body.find("Срок"))
+        table = reopened.body.textCursor().currentTable()
+        self.assertEqual((table.rows(), table.columns()), (2, 3))
+        self.assertIsNone(link_url("file:///C:/private.txt"))
+        self.assertIsNone(link_url("https:"))
 
     def test_drop_hint_is_one_short_line(self):
         """The hint under the list fits one line of an ordinary list column; formats are in its tooltip."""
@@ -202,13 +344,20 @@ class TestMeetingsList(unittest.TestCase):
         self._click_project(None)
         self.assertIsNotNone(self.window.meeting)
 
-    def test_project_click_on_the_board_keeps_the_meeting(self):
-        """On the task board a project filters the board; the meeting behind it is not closed."""
-        self.window.recordings_folder = self.recordings
-        self.window.show_meeting(QLabel("встреча"), "Встреча")
-        self.window.show_page(QLabel("доска"), "Задачи", "задачи")
+    def test_task_board_filters_locally_and_sidebar_project_opens_meetings(self):
+        page = TasksWindow(self.recordings, (["Склад"], {}))
+        self.window.show_page(page, "Задачи", "задачи")
+        page._project_button.menu().actions()[1].trigger()
+        self.assertEqual(page.project, "Склад")
+        self.assertIsNone(self.window.project)
+        self.assertFalse(self.window.panel.selectedItems())
         self._click_project("Склад")
-        self.assertIsNotNone(self.window.meeting)
+        self.assertIsNone(self.window.page)
+        self.assertEqual(self.window.project, "Склад")
+        opened = []
+        self.window.tasks.connect(opened.append)
+        self._section("задачи")
+        self.assertEqual(opened, [None])
 
     def test_help_takes_the_search_box_and_gives_it_back(self):
         """In the help the search box at the top searches the help; the meeting query comes back after it."""
@@ -263,8 +412,8 @@ class TestMeetingsList(unittest.TestCase):
         self.assertLessEqual(sections.width(), 56)
         element = sections.element("задачи")
         self.assertEqual((element.text(), element.toolTip()), ("", "Задачи"))
-        self.assertEqual(self.window.panel.item(1).text(), "")  # projects as icons too, the name in the tooltip
-        self.assertIn("Склад", self.window.panel.item(1).toolTip())
+        self.assertEqual(self.window.panel.item(0).text(), "")  # projects as icons too, the name in the tooltip
+        self.assertIn("Склад", self.window.panel.item(0).toolTip())
         self.assertEqual(layouts[-1]["скрыто"], ["проекты"])
         self.window.expand()
         app.processEvents()

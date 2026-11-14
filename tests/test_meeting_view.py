@@ -12,9 +12,9 @@ from unittest import mock
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QPushButton, QScrollBar
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLabel, QMessageBox, QPushButton, QScrollBar
 
-from knotes import catalog, minutes, notes, transcript, kinds
+from knotes import catalog, minutes, notes, transcript, kinds, tasks
 from knotes.ui import export_dialog, style
 from knotes.ui import meeting_view
 from knotes.ui import minutes_view as minutes_window
@@ -459,10 +459,10 @@ class TestMeetingView(unittest.TestCase):
 
         with (
             mock.patch.object(transcript, "locked", locked),
-            mock.patch.object(transcript, "write_text", side_effect=lambda *a: events.append("write")),
+            mock.patch.object(transcript, "write_text", side_effect=lambda path, _text: events.append(path.name)),
         ):
             self.assertTrue(view.save())
-        self.assertEqual(events, ["lock", "write", "unlock"])
+        self.assertEqual(events, ["lock", minutes.BOARD_REVIEW, minutes.FILE, "unlock"])
 
     def test_search_waits_for_typing_and_treats_e_and_yo_alike(self):
         self.window.show_tab(TRANSCRIPT)
@@ -473,6 +473,56 @@ class TestMeetingView(unittest.TestCase):
         self.assertEqual(self.window.found.text(), "1 из 1")
         self.assertIn("background", self.window._rows[1].text())
 
+    def test_generation_waits_for_notes_to_be_saved(self):
+        notes.add(self.window.folder, 5, "Личное")
+        self.window.show_tab(NOTES)
+        self.window.notepad.editor.toggle_private()
+        generated = []
+        self.window.compose_minutes.connect(lambda folder: generated.append(notes.read(folder).lines[0].private))
+        with (
+            mock.patch.object(notes, "write", side_effect=PermissionError(errno.EACCES, "busy")),
+            mock.patch.object(
+                self.window.notepad,
+                "_keep_copy",
+                side_effect=lambda reason, _content: self.window.notepad.failure.setText(reason),
+            ),
+        ):
+            self.window.minutes.compose.emit()
+            self.assertEqual(generated, [])
+        self.window.minutes.compose.emit()
+        self.assertEqual(generated, [True])
+
+    def test_notes_review_searches_orders_and_reopens_the_editor(self):
+        folder = self.window.folder
+        notes.write(
+            folder,
+            notes.Notes(
+                lines=(
+                    notes.NoteLine("Последняя", 50),
+                    notes.NoteLine("Личная ёлка", 2, True),
+                    notes.NoteLine("После звонка"),
+                )
+            ),
+        )
+        transcript.mark(folder, 25)
+        (folder / "микрофон.flac").touch()
+        self.window.show_tab(NOTES)
+        self.window._to_search()
+        review = self.window.notepad.review
+        captions = [review.list_.item(n).text() for n in range(review.list_.count())]
+        self.assertIn("00:02", captions[0])
+        self.assertIn("00:25", captions[1])
+        self.assertIn("00:50", captions[2])
+        self.assertEqual(captions[3], "После звонка")
+        review.search.setText("елка")
+        self.assertEqual(review.list_.count(), 1)
+        self.assertIn(notes.PRIVATE, review.list_.currentItem().text())
+        with mock.patch.object(self.window.player, "play") as play:
+            review.play_button.click()
+        self.assertEqual(play.call_args.args[:2], (folder, 2))
+        review.edit_button.click()
+        self.assertEqual(self.window.notepad.editor.textCursor().blockNumber(), 1)
+
     def test_note_text_shown_as_typed(self):
         """A note "P&L <b>план</b>" is text: not markup, and the ampersand is not swallowed by the button."""
         notes.add(self.window.folder, 3.0, "P&L <b>план</b>")
@@ -482,6 +532,36 @@ class TestMeetingView(unittest.TestCase):
         self.assertIn("P&L <b>план</b>", label.text())
         link = next(b for b in self.window.panel.findChildren(QPushButton) if "P&&L" in b.text())
         self.assertIn("&lt;b&gt;", link.toolTip())
+
+    def test_manual_minutes_and_task_selection(self):
+        view = self.window.minutes
+        view._write_manually.click()
+        view.edit_item.setPlainText("# Протокол\n\n## Задачи\n\n1. Первая задача.\n2. Вторая задача.")
+        view._change.click()
+        self.assertIn("Вторая задача", view.file.read_text(encoding="utf-8"))
+        self.assertEqual(tasks.tasks(view.folder.parent), [])
+
+        def accept_selected(dialog):
+            self.assertEqual(dialog.list_.count(), 2)
+            self.assertEqual(dialog.list_.item(0).checkState(), Qt.CheckState.Unchecked)
+            dialog.list_.item(0).setCheckState(Qt.CheckState.Checked)
+            return QDialog.DialogCode.Accepted
+
+        with mock.patch.object(minutes_window.TaskSelection, "exec", accept_selected):
+            view._board.click()
+        self.assertEqual([card.text for card in tasks.tasks(view.folder.parent)], ["Первая задача."])
+
+    def test_minutes_edit_does_not_overwrite_a_concurrent_change(self):
+        view = self.window.minutes
+        view.file.write_text("# Исходный\n", encoding="utf-8")
+        view.display()
+        view._change.click()
+        view.edit_item.setPlainText("# Черновик")
+        view.file.write_text("# Внешняя правка\n", encoding="utf-8")
+        self.assertFalse(view.save())
+        self.assertEqual(view.file.read_text(encoding="utf-8"), "# Внешняя правка\n")
+        self.assertEqual(view.edit_item.toPlainText(), "# Черновик")
+        view.display()
 
     def test_minutes_edit_saved_by_itself(self):
         """An edit of the minutes is saved while typing, as in the notepad, not only when the meeting closes."""

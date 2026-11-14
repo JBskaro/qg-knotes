@@ -100,8 +100,8 @@ class TestReport(unittest.TestCase):
 
 class TestLines(unittest.TestCase):
     def test_projects_with_split_and_quiet_rows_last(self):
-        lines = summary_report.project_lines(_report(Selection(summary.ALL)).projects, 0.98)
-        self.assertEqual([line.name for line in lines], ["Склад", "Отчеты", "Без проекта", "Вне встреч"])
+        lines = summary_report.project_lines(_report(Selection(summary.ALL)).projects)
+        self.assertEqual([line.name for line in lines], ["Склад", "Отчеты", "Без проекта"])
         first = lines[0]
         self.assertEqual(
             (first.share, first.figure, first.project, first.quiet), (1.0, "30 мин · 0,40 $", "Склад", False)
@@ -109,66 +109,42 @@ class TestLines(unittest.TestCase):
         self.assertEqual(first.tooltip, "Склад: встреч 1, 30 мин, 0,40 $ (речь 0,10 $, протоколы 0,30 $)")
         self.assertAlmostEqual(lines[1].share, 600 / 1800)
         self.assertEqual((lines[2].project, lines[2].quiet), ("", True))
-        self.assertEqual((lines[3].figure, lines[3].share, lines[3].quiet), ("0,98 $", 0, True))
         self.assertEqual(summary_report.project_lines([]), [])
 
-    def test_models_share_of_the_whole_account(self):
+    def test_models_share_of_the_local_expenses(self):
         result = _report().result
-        lines = summary_report.model_lines(result, 0.5)
+        lines = summary_report.model_lines(result)
         self.assertEqual(
             [(line.name, line.figure, line.kind) for line in lines],
             [
-                ("Речь · ElevenLabs Scribe v2", "0,20 $ · 20%", 0),
-                ("Протоколы · Claude Sonnet 5.5", "0,30 $ · 30%", 1),
-                ("Вне встреч", "0,50 $ · 50%", 0),
+                ("Речь · ElevenLabs Scribe v2", "0,20 $ · 40%", 0),
+                ("Протоколы · Claude Sonnet 5.5", "0,30 $ · 60%", 1),
             ],
         )
-        self.assertTrue(lines[-1].quiet)
-        self.assertEqual(lines[0].tooltip, "Речь · ElevenLabs Scribe v2 · 0,20 $ · 20%")
+        self.assertEqual(lines[0].tooltip, "Речь · ElevenLabs Scribe v2 · 0,20 $ · 40%")
         self.assertEqual(len(summary_report.model_lines(result)), 2)
 
 
 class TestSpending(unittest.TestCase):
     BALANCE = providers.Balance(8.52, 10.0, "ключ", for_month=1.48, by_key=2.0)
 
-    def test_account_only_for_this_month_or_all_time_of_all_projects(self):
-        account = summary_report.by_account
-        self.assertEqual(account(Selection(), self.BALANCE), (True, 1.48))
-        self.assertEqual(account(Selection(summary.ALL), self.BALANCE), (False, 2.0))
-        for selection in (Selection(shift=1), Selection(project="Склад"), Selection(summary.YEAR)):
-            self.assertIsNone(account(selection, self.BALANCE), selection)
-        self.assertIsNone(account(Selection(), None))
-        self.assertIsNone(account(Selection(), providers.Balance(1, 2, "ключ")))  # the service has no account
-
-    def test_spent_by_account_with_outside_meetings(self):
-        spent = summary_report.spending(_report(), self.BALANCE, "OpenRouter")
-        self.assertAlmostEqual(spent.outside, 0.98)
-        self.assertEqual(spent.spent.value, "1,48 $")
+    def test_spent_from_journal_with_previous_period_and_error(self):
+        figure = summary_report.spent_figure(_report(), "Журнал трат не прочитан")
+        self.assertEqual(figure.value, "0,50 $")
         self.assertEqual(
-            spent.spent.hint.split("\n"),
-            ["в сентябре 0,25 $", "как в OpenRouter за месяц", "по встречам 0,50 $, вне встреч 0,98 $"],
+            figure.hint.splitlines(),
+            [
+                "По журналу расходов «Узелка»",
+                "в сентябре 0,25 $",
+                "Журнал трат не прочитан",
+            ],
         )
-        self.assertEqual((spent.projects[-1].name, spent.models[-1].name), ("Вне встреч", "Вне встреч"))
-        by_key = summary_report.spending(_report(Selection(summary.ALL)), self.BALANCE, "OpenRouter")
-        self.assertIn("как в OpenRouter по ключу", by_key.spent.hint)
-
-    def test_account_below_meetings_alone_and_log_error(self):
-        less = providers.Balance(9.6, 10.0, "ключ", for_month=0.40, by_key=0.40)
-        spent = summary_report.spending(_report(), less, "OpenRouter", "Журнал трат не прочитан")
-        self.assertEqual((spent.outside, spent.spent.value), (0.0, "0,50 $"))
-        self.assertEqual(
-            spent.spent.hint.split("\n"),
-            ["в сентябре 0,25 $", "OpenRouter за месяц 0,40 $", "Журнал трат не прочитан"],
-        )
-        all_time = summary_report.spending(_report(Selection(summary.ALL)), less, "OpenRouter")
-        self.assertEqual(all_time.spent.hint, "OpenRouter по ключу 0,40 $")
-        alone = summary_report.spending(_report(), None, "OpenRouter")
-        self.assertEqual((alone.spent.hint, len(alone.models)), ("в сентябре 0,25 $", 2))
 
     def test_balance_tile(self):
         figure = summary_report.balance_figure(self.BALANCE, "OpenRouter", MEETINGS)
         self.assertEqual((figure.value, figure.share), ("8,52 $", 0.852))
-        self.assertRegex(figure.hint, r"^из 10 \$, хватит на \d+ ч встреч$")
+        self.assertRegex(figure.hint.splitlines()[0], r"^из 10 \$, хватит на \d+ ч встреч$")
+        self.assertIn("2,00 $", figure.hint)
         account = summary_report.balance_figure(providers.Balance(3, 0, "счет"), "OpenRouter", [])
         self.assertEqual((account.hint, account.share), ("на счете, из 0 $", 0))
         failed = summary_report.balance_figure(providers.ProviderError("Сервер не ответил"), "OpenRouter", [])

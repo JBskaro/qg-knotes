@@ -88,6 +88,25 @@ class TestSpendingLog(unittest.TestCase):
         self.assertEqual(len(list_), 3)
         self.assertEqual({tr.project for tr in list_}, {"Бухгалтерия"})
 
+    def test_empty_or_invalid_journal_recovers_meeting_costs(self):
+        path = self.recordings / spending.FILE
+        path.parent.mkdir(exist_ok=True)
+        for content in ("", '{"когда":"2026-10-01","встреча":"x","вид":"Речь","сколько":"NaN"}'):
+            path.write_text(content, encoding="utf-8")
+            self.assertAlmostEqual(self._total(), 0.13)
+        spending.write(self.folder, catalog.SPEECH, "scribe", 0.02)
+        self.assertAlmostEqual(self._total(), 0.15)
+        spending.write(self.folder, catalog.MINUTES_KIND, "claude", 0.03)
+        self.assertAlmostEqual(self._total(), 0.18)
+
+    def test_append_after_truncated_line_keeps_new_expense(self):
+        spending.write(self.folder, catalog.SPEECH, "scribe", 0.02)
+        path = self.recordings / spending.FILE
+        with path.open("a", encoding="utf-8") as file:
+            file.write('{"unfinished":')
+        spending.write(self.folder, catalog.SPEECH, "scribe", 0.04)
+        self.assertAlmostEqual(self._total(), 0.19)
+
     def test_free_is_not_logged(self):
         spending.write(self.folder, catalog.SPEECH, "локальная", 0.0)
         self.assertFalse((self.recordings / spending.FILE).exists())
@@ -116,19 +135,6 @@ class TestSummaryBySpending(unittest.TestCase):
             p.name: round(p.result.cost, 2) for p in summary.by_projects([self.september], s, by, self.spending)
         }
         self.assertEqual(projects, {"Склад": 0.05, catalog.NO_PROJECT: 0.07})
-
-    def test_outside_meetings_by_service_account(self):
-        """The difference with the service account only when it is above the meeting spending; model shares are of
-        the whole account."""
-        result = summary.Outcome(
-            cost=0.46, minutes_list=0.18, by_models=((catalog.SPEECH, "", 0.28), (catalog.MINUTES_KIND, "", 0.18))
-        )
-        self.assertAlmostEqual(summary.outside_meetings(result, 1.48), 1.02)
-        for account in (None, 0.46, 0.4601, 0.30):
-            with self.subTest(account=account):
-                self.assertEqual(summary.outside_meetings(result, account), 0.0)
-        self.assertEqual([round(share, 2) for *_, share in summary.models(result, 1.48)], [0.19, 0.12])
-        self.assertEqual([round(share, 2) for *_, share in summary.models(result)], [0.61, 0.39])
 
     def test_rows_by_meetings_with_deleted(self):
         lines = summary.by_meetings(

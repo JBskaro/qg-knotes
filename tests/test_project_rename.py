@@ -144,11 +144,15 @@ class TestProjectRename(unittest.TestCase):
         """A meeting file that can't be read right after the rename wrote it is named, not written over; the notes
         file the rename did not change (no notes of the project) is left as it is."""
         projects.set_(self.recordings, "Склад", projects.ProjectNotes())
-        notes_before, reads, original = (self.recordings / projects.FILE).read_bytes(), [], project_rename._content
+        notes_before, original = (self.recordings / projects.FILE).read_bytes(), project_rename._content
+        target = self.folders[0] / catalog.PROPERTIES
+        reads = 0
 
         def content(path: pathlib.Path) -> bytes | None:
-            reads.append(path)
-            if len(reads) == 5:  # the four files read first, then the first meeting written
+            nonlocal reads
+            if path == target:
+                reads += 1
+            if path == target and reads == 2:
                 raise PermissionError(13, "denied", str(path))
             return original(path)
 
@@ -159,8 +163,8 @@ class TestProjectRename(unittest.TestCase):
             self.assertRaises(project_rename.NotRenamed) as caught,
         ):
             project_rename.rename(self.recordings, self._meetings(), "Склад", "Север")
-        self.assertEqual(caught.exception.left, [reads[4]])
-        self.assertEqual(catalog.properties(reads[4].parent)["проект"], "Север")
+        self.assertEqual(caught.exception.left, [target])
+        self.assertEqual(catalog.properties(self.folders[0])["проект"], "Север")
         self.assertEqual((self.recordings / projects.FILE).read_bytes(), notes_before)
 
     def test_file_the_rename_created_is_removed_again(self):

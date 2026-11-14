@@ -5,13 +5,14 @@ agenda comes with the project, Esc hides the notepad, notes are saved; in the me
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QMimeData, QPoint, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from knotes import notes, catalog, projects, transcript
+from knotes import notes, catalog, projects, settings, transcript
 from knotes.ui.notepad import Notepad, NotepadWindow
 from knotes.ui.recording_bar import RecordingBar
 
@@ -62,6 +63,41 @@ class TestNotepad(unittest.TestCase):
         self.assertEqual(
             notes.with_minutes(self.folder), [(121, "Решение - цена из прайса"), (300, "- [ ] спросить про остановку?")]
         )
+
+    def test_private_note_survives_type_change_split_paste_and_reload(self):
+        tab = self._window(Notepad(self.folder, lambda: 17))
+        editor = tab.editor
+        editor.insertPlainText("уточнить детали")
+        tab._toggle_private()
+        editor.insert_kind("Вопрос")
+        editor.insert_kind("Задача")
+        editor.moveCursor(QTextCursor.MoveOperation.PreviousWord)
+        QTest.keyClick(editor, Qt.Key.Key_Return)
+        self.assertTrue(all(line.private for line in editor.lines()))
+        self.assertEqual(editor.lines()[0], notes.NoteLine("Задача - уточнить ", 17, True))
+        pasted = QMimeData()
+        pasted.setText("новое\nещё")
+        editor.insertFromMimeData(pasted)
+        self.assertTrue(tab.save())
+        self.assertTrue(all(line.private for line in notes.read(self.folder).lines))
+        self.assertEqual(notes.for_model(self.folder), [])
+        tab.load()
+        self.assertTrue(all(line.private for line in editor.lines()))
+        self.assertNotIn("Вопрос -", editor.toPlainText())
+
+    def test_stale_notepad_cannot_make_private_line_public(self):
+        spare = self.recordings / "settings"
+        first = self._window(Notepad(self.folder))
+        first.editor.insertPlainText("личные детали")
+        self.assertTrue(first.save())
+        second = self._window(Notepad(self.folder))
+        first._toggle_private()
+        second.editor.insertPlainText("правка")
+        with mock.patch.object(settings, "data_folder", return_value=spare), self.assertLogs("knotes.ui.notepad"):
+            self.assertFalse(second.save())
+        self.assertTrue(notes.read(self.folder).lines[0].private)
+        self.assertIn("правка", second.editor.toPlainText())
+        second.load()
 
     def test_project_agenda_on_project_choice(self):
         projects.set_for_meeting(self.recordings, "Склад", "Сроки препрода\nКто подписывает акты")

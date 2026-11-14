@@ -5,7 +5,7 @@ dragged onto a project moves into it. The project menu's "Color", "Icon" and "De
 import pathlib
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent, QMouseEvent, QPalette
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QMenu
 
@@ -15,19 +15,17 @@ from knotes.ui import style
 from knotes.ui.meetings_list import MEETINGS_MIME
 from knotes.language import tr
 
-ALL = "\x00все"  # the "All projects" panel row: neither a project nor "no project"
-
 
 class ProjectsPanel(QListWidget):
     """Projects on the left: a click shows the project's meetings, a meeting dragged onto a project moves into it."""
 
-    selected = Signal(object)  # None - all meetings, "" - no project, otherwise the project name
+    selected = Signal(str)  # empty for items without a project
     assign = Signal(list, str)  # meeting folders, project
     menu = Signal(str, QPoint)  # project and where to show its menu
 
     def __init__(self):
         super().__init__()
-        self.setObjectName("разделы")
+        self.setObjectName("проекты")
         self.setMinimumWidth(150)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # a long name is shortened
         self.setAcceptDrops(True)
@@ -53,9 +51,8 @@ class ProjectsPanel(QListWidget):
             self.display(*self._shown)
 
     @staticmethod
-    def _key(element: QListWidgetItem) -> str | None:
-        key = element.data(Qt.ItemDataRole.UserRole)
-        return None if key == ALL else key
+    def _key(element: QListWidgetItem) -> str:
+        return element.data(Qt.ItemDataRole.UserRole)
 
     def _current_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current:
@@ -72,31 +69,33 @@ class ProjectsPanel(QListWidget):
             self.selected.emit(self._key(element))
         self._changed_by_press = False
 
-    def display(
-        self, account: dict[str, int], projects: list[str], current: str | None, kind: dict[str, dict] | None = None
-    ) -> None:
-        """Rows "All projects", projects in alphabetical order and "No project", each with its meeting count.
+    def display(self, account: dict[str, int], projects: list[str], current: str | None, kind: dict[str, dict]) -> None:
+        """Projects in alphabetical order and "No project", with their meeting counts.
         The list refreshes every 5 seconds: without changes the panel is not rebuilt, otherwise the row under the
         dragged meeting would disappear."""
-        kind = kind or {}
         self._shown = (account, projects, current, kind)
-        snapshot = (tuple(sorted(account.items())), tuple(projects), current, repr(sorted(kind.items())), self._compact)
+        counts = tuple(sorted(account.items()))
+        snapshot = (counts, tuple(projects), repr(sorted(kind.items())), self._compact)
         if snapshot == self._snapshot:
+            codes = [*projects, ""]
+            row = codes.index(current) if current in codes else -1
+            with QSignalBlocker(self):
+                self.setCurrentRow(row)
             return
         self._snapshot = snapshot
         color = self.palette().color(QPalette.ColorRole.WindowText)
         lines = [
-            (tr("All projects"), ALL, sum(account.values()), style.icon(style.ALL_PROJECTS, color)),
-            *((p, p, account.get(p, 0), style.project_icon(kind.get(p, {}), color)) for p in projects),
-            (tr(catalog.NO_PROJECT), "", account.get("", 0), style.icon(style.FOLDER, color)),
+            *((p, p, style.project_icon(kind.get(p, {}), color)) for p in projects),
+            (tr(catalog.NO_PROJECT), "", style.icon(style.FOLDER, color)),
         ]
         self.blockSignals(True)
         self.clear()
-        for row_label, code, count, icon in lines:
-            element = QListWidgetItem(icon, "" if self._compact else f"{row_label}  ({count})", self)
-            element.setToolTip(f"{row_label}  ({count})" if self._compact else "")
+        for row_label, code, icon in lines:
+            label = f"{row_label}  ({account.get(code, 0)})"
+            element = QListWidgetItem(icon, "" if self._compact else label, self)
+            element.setToolTip(label if self._compact else "")
             element.setData(Qt.ItemDataRole.UserRole, code)
-            if code == (ALL if current is None else current):
+            if code == current:
                 self.setCurrentItem(element)
         self.blockSignals(False)
         self._light_up(self._under_mouse)
@@ -107,7 +106,7 @@ class ProjectsPanel(QListWidget):
 
     def _target(self, event: QDragMoveEvent) -> QListWidgetItem | None:
         element = self.itemAt(event.position().toPoint())
-        if not event.mimeData().hasFormat(MEETINGS_MIME) or element is None or self._key(element) is None:
+        if not event.mimeData().hasFormat(MEETINGS_MIME) or element is None:
             return None
         return element
 

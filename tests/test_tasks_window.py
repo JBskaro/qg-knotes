@@ -263,7 +263,7 @@ class TestTasksWindow(BoardCase):
             "В архив",
         ):
             self.assertIn(row_label, row_labels)
-        self.assertNotIn("Удалить…", row_labels)  # a minutes item is not deleted
+        self.assertIn("Удалить…", row_labels)
         _item(menu, "Приоритет", "Высокий").trigger()
         app.processEvents()
         _item(self.window._task_menu(finish), "Срок", "Завтра").trigger()
@@ -293,7 +293,7 @@ class TestTasksWindow(BoardCase):
         app.processEvents()
         self.assertNotIn("Своя", [z.text for z in tasks.tasks(self.recordings)])
 
-    def test_keys_enter_opens_delete_archives(self):
+    def test_keys_enter_opens_delete_asks_for_confirmation(self):
         col = self.window.columns[tasks.TODO]
         col.setFocus()
         col.setCurrentRow(1)
@@ -306,16 +306,18 @@ class TestTasksWindow(BoardCase):
         self.assertEqual((field.text(), self.window.panel.isHidden()), ("", False))
         QTest.keyClick(col, Qt.Key.Key_Escape)  # then it closes the panel
         self.assertTrue(self.window.panel.isHidden())
-        QTest.keyClick(col, Qt.Key.Key_Delete)
+        with mock.patch.object(style, "ask", return_value=True) as confirm:
+            QTest.keyClick(col, Qt.Key.Key_Delete)
         app.processEvents()
-        self.assertTrue(self._task("Проверить коэффициент.").archive)
+        confirm.assert_called_once()
+        self.assertNotIn("Проверить коэффициент.", [z.text for z in tasks.tasks(self.recordings)])
         self.assertNotIn("Проверить коэффициент.", self._texts(tasks.TODO))
 
     def test_archive_and_delete_from_panel(self):
         col = self.window.columns[tasks.TODO]
         self.window.open_task(col.item(0).data(ROLE))
         panel = self.window.panel
-        self.assertTrue(panel.delete.isHidden())  # a minutes item is not deleted
+        self.assertFalse(panel.delete.isHidden())
         panel.archive.click()
         app.processEvents()
         self.assertTrue(self._task("Доделать загрузку.").archive)
