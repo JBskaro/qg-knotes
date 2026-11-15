@@ -8,8 +8,7 @@ counting as one of these bases (projects.py); a card keeps the key of its column
 counts as another state goes to the first column of its state. The board of all projects has the three base columns.
 
 Any card has a description, assignee, due date, labels, priority, checklist, place in the column and archive flag.
-A minutes item is recognized by meeting, section and text: its status and edits survive even if the minutes are
-written again with the same items, and the minutes themselves do not change: the edits are stored separately.
+A minutes item has a stable key within the meeting. Its card edits are stored separately from the minutes.
 Everything is stored in the recordings folder (.узелок/задачи.json): item statuses, item edits, own tasks and labels.
 A broken card or minutes file is skipped with a note in the log: the rest of the board opens.
 """
@@ -22,7 +21,9 @@ import logging
 import pathlib
 import re
 import uuid
+from collections import Counter
 from collections.abc import Callable
+from typing import NamedTuple
 
 from knotes import catalog, disk_names, language, minutes, notes, projects, transcript
 
@@ -268,24 +269,57 @@ def _create_labels(data: dict, names: list[str]) -> None:
             list_.append({"имя": name, "цвет": len(list_) % LABEL_COLORS})
 
 
+class _MinutesCard(NamedTuple):
+    key: str
+    text: str
+    heading: str
+    kind: str
+    who: str
+    due: datetime.date | None
+    second: int | None
+    number: str
+
+
 @functools.lru_cache(maxsize=4096)
-def _board_items(file: pathlib.Path, _file_key: tuple[int, int]) -> tuple[tuple, ...]:
-    """(kind, section heading, text, who, due date, second) of the minutes items that go to the board, re-read only
-    when the file changed (mtime and size)."""
-    result = []
-    for heading, item, board, assignee in minutes.board_items(file.read_text(encoding="utf-8")):
-        who, due = who_and_due(assignee)
-        result.append((board or DECISION, heading, item.text, who, due, item.second))
-    return tuple(result)
+def _board_items(
+    file: pathlib.Path, _file_key: tuple[int, int], _review_key: tuple[int, int] | None
+) -> tuple[tuple[_MinutesCard, ...], frozenset[str] | None]:
+    text = file.read_text(encoding="utf-8")
+    rows = minutes.board_items(text)
+    keys, selected = minutes.board_identity(file.parent, text, rows)
+    cards = []
+    for key, row in zip(keys, rows, strict=True):
+        who, due = who_and_due(row.assignee)
+        cards.append(
+            _MinutesCard(
+                f"{file.parent.name}|{key}",
+                row.item.text,
+                row.heading,
+                row.kind or DECISION,
+                who,
+                due,
+                row.item.second,
+                row.item.number,
+            )
+        )
+    default = None if selected is None else frozenset(f"{file.parent.name}|{key}" for key in selected)
+    return tuple(cards), default
 
 
-def _items_of(folder: pathlib.Path) -> tuple[tuple, ...]:
-    file = folder / minutes.FILE
+def _stamp(file: pathlib.Path) -> tuple[int, int] | None:
     try:
         info = file.stat()
     except FileNotFoundError:
-        return ()
-    return _board_items(file, (info.st_mtime_ns, info.st_size))
+        return None
+    return info.st_mtime_ns, info.st_size
+
+
+def _items_of(folder: pathlib.Path) -> tuple[tuple[_MinutesCard, ...], frozenset[str] | None]:
+    file = folder / minutes.FILE
+    stamp = _stamp(file)
+    if stamp is None:
+        return (), None
+    return _board_items(file, stamp, _stamp(folder / minutes.BOARD_REVIEW))
 
 
 def _with_data(task: Task, data: object) -> Task:
@@ -307,46 +341,37 @@ def _skipped(make: Callable[[], Task], what: str) -> Task | None:
         return None
 
 
-def _minutes_key(folder: pathlib.Path, values: tuple) -> str:
-    return f"{folder.name}|{values[1]}|{values[2]}"
-
-
-def _minutes_card(values: tuple, project: str, origin: Source, data: dict) -> Task | None:
-    kind, _heading, text, who, due, _second = values
-    key = _minutes_key(origin.folder, values)  # type: ignore[arg-type]
-    task = Task(key, text, who, due, kind, project, _part(data, "состояния", dict).get(key, TODO), origin)
+def _minutes_card(values: _MinutesCard, project: str, origin: Source, data: dict) -> Task | None:
+    key = values.key
+    status = _part(data, "состояния", dict).get(key, TODO)
+    task = Task(key, values.text, values.who, values.due, values.kind, project, status, origin)
     return _skipped(lambda: _with_data(task, _part(data, "правки", dict).get(key, {})), key)
 
 
-def _on_board(data: dict, key: str, selected: set[str] | None) -> bool:
+def _on_board(data: dict, key: str, selected: frozenset[str] | None) -> bool:
     return key not in _part(data, "удалены", dict) and (selected is None or key in selected)
 
 
-def _selected(folder: pathlib.Path, data: dict) -> set[str] | None:
+def _selected(folder: pathlib.Path, data: dict, default: frozenset[str] | None) -> frozenset[str] | None:
     selected = _part(data, "отбор", dict).get(folder.name)
     if isinstance(selected, list):
-        return {key for key in selected if isinstance(key, str)}
-    review = folder / minutes.BOARD_REVIEW
-    if review.exists():
-        ids = transcript.read_json(review, [])
-        known = {value for value in ids if isinstance(value, str)}
-        return {_minutes_key(folder, v) for v in _items_of(folder) if minutes.board_item_id(v[1], v[2]) in known}
-    return None
+        return frozenset(key for key in selected if isinstance(key, str))
+    return default
 
 
 def _from_minutes(meeting: catalog.Meeting, data: dict) -> list[Task]:
     """Cards of the meeting minutes; minutes that cannot be read (not UTF-8, the disk failed) give none."""
     try:
-        items = _items_of(meeting.folder)
+        items, default = _items_of(meeting.folder)
     except (OSError, ValueError) as error:
         log.warning("skipped the minutes of %s on the board: %s", meeting.folder.name, error)
         return []
     date = meeting.date.date()
-    selected = _selected(meeting.folder, data)
+    selected = _selected(meeting.folder, data, default)
     cards = (
-        _minutes_card(values, meeting.project, Source(meeting.folder, meeting.heading, date, values[5]), data)
+        _minutes_card(values, meeting.project, Source(meeting.folder, meeting.heading, date, values.second), data)
         for values in items
-        if _on_board(data, _minutes_key(meeting.folder, values), selected)
+        if _on_board(data, values.key, selected)
     )
     return [z for z in cards if z is not None]
 
@@ -396,15 +421,24 @@ def tasks(
 def review_items(folder: pathlib.Path) -> dict[str, tuple[str, str, bool]]:
     """Protocol entries and their current board membership, in reading order."""
     data = _data(folder.parent)
-    selected = _selected(folder, data)
-    entries = {_minutes_key(folder, values): (values[1], values[2]) for values in _items_of(folder)}
-    return {key: (*entry, _on_board(data, key, selected)) for key, entry in entries.items()}
+    items, default = _items_of(folder)
+    selected = _selected(folder, data, default)
+    counts = Counter((row.heading, row.text) for row in items)
+    result = {}
+    for row in items:
+        title = row.text
+        if counts[row.heading, row.text] > 1:
+            details = [z for z in (row.who, transcript.time(row.second) if row.second is not None else "") if z]
+            title = " · ".join([f"{row.number}. {title}", *details])
+        result[row.key] = row.heading, title, _on_board(data, row.key, selected)
+    return result
 
 
 @transcript.locked_edit(FILE)
 def review(recordings: pathlib.Path, folder: pathlib.Path, keys: set[str], expected: set[str]) -> None:
     """Store the chosen entries for this meeting, preserving the rest of the board."""
-    allowed = {_minutes_key(folder, values) for values in _items_of(folder)}
+    items, _ = _items_of(folder)
+    allowed = {row.key for row in items}
     if expected != allowed or not keys <= allowed:
         raise GoneError(language.tr("The minutes changed. Open the task selection again."))
     data = _data(recordings)
@@ -429,13 +463,15 @@ def refreshed(recordings: pathlib.Path, task: Task) -> Task | None:
     else:
         folder = task.origin.folder or recordings
         try:
-            items = _items_of(folder)
+            items, default = _items_of(folder)
         except (OSError, ValueError):
             return None
-        if not _on_board(data, task.key, _selected(folder, data)):
+        if not _on_board(data, task.key, _selected(folder, data, default)):
             return None
-        values = next((z for z in items if _minutes_key(folder, z) == task.key), None)
-        fresh = values and _minutes_card(values, task.project, task.origin, data)
+        values = next((z for z in items if z.key == task.key), None)
+        fresh = values and _minutes_card(
+            values, task.project, dataclasses.replace(task.origin, second=values.second), data
+        )
     return _placed(fresh, projects.all_columns(recordings)) if fresh else None
 
 
@@ -509,9 +545,8 @@ def _exists(recordings: pathlib.Path, key: str, data: dict) -> bool:
     """The minutes item is still in its minutes."""
     folder = recordings / key.partition("|")[0]
     try:
-        return _on_board(data, key, _selected(folder, data)) and any(
-            _minutes_key(folder, z) == key for z in _items_of(folder)
-        )
+        items, default = _items_of(folder)
+        return _on_board(data, key, _selected(folder, data, default)) and any(row.key == key for row in items)
     except (OSError, ValueError):
         return False
 

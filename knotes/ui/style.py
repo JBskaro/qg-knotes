@@ -63,7 +63,6 @@ RIGHT = ""
 STAR, PAUSE, LATER_SPAN, STOP = "", "", "", ""
 SEARCH, SETTINGS, HELP, MORE, REFRESH, EYE = "", "", "", "", "", ""
 FILTER_FILES, FOLDER, DOCUMENT, SEND, UPLOAD = "", "", "", "", ""
-DOWNLOAD = "\ue896"
 PLUS, CLOSE, BOOK, VIDEO = "", "", "", ""
 CHART = ""
 ALL_PROJECTS, COLLAPSE_PANEL, EXPAND_PANEL = "\ue8f1", "\ue89f", "\ue8a0"  # sections column
@@ -371,6 +370,17 @@ def ask(parent_: QWidget, title: str, text: str, warning: bool = False) -> bool:
     return box.exec() in (QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.Ok)
 
 
+def confirm(parent_: QWidget, title: str, text: str, action: str) -> bool:
+    box = QMessageBox(QMessageBox.Icon.Question, title, text, parent=parent_)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    accept = box.addButton(action, QMessageBox.ButtonRole.AcceptRole)
+    cancel = box.addButton(tr("Cancel"), QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec()
+    return box.clickedButton() is accept
+
+
 def projects_menu(
     parent_: QWidget,
     projects: Sequence[str],
@@ -538,8 +548,12 @@ QListWidget#разделы::item, QListWidget#проекты::item {{ padding: 2
 QListWidget#разделы::item:hover, QListWidget#проекты::item:hover {{ background: {hover}; }}
 QListWidget#разделы::item:selected {{ background: {choice}; color: {choice_text}; }}
 QListWidget#проекты::item:selected {{ background: {frame_box}; }}
-QToolButton#значок {{ font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 15px; border: none;
-                      border-radius: 4px; padding: 6px; min-width: 20px; }}
+QToolButton#значок, QToolButton#обновление {{ font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+    font-size: 15px; }}
+QToolButton#значок {{ border: none; border-radius: 4px; padding: 6px; min-width: 20px; }}
+QToolButton#обновление {{ background: {layer_}; border: 1px solid {frame_box}; border-radius: 8px; }}
+QToolButton#обновление:hover {{ background: {frame_box}; }}
+QToolButton#обновление:focus {{ border-color: {a}; }}
 QToolButton#значок:hover {{ background: {hover}; }}
 QToolButton#значок:checked {{ background: {choice}; color: {choice_text}; }}
 QToolButton#значок::menu-indicator {{ image: none; width: 0; }}

@@ -288,7 +288,7 @@ class TestTasksWindow(BoardCase):
         self.assertEqual((self._task("Доделать загрузку.").due, self._task("Доделать загрузку.").archive), (None, True))
         custom = tasks.add(self.recordings, "Своя", "Склад")
         self.window.display()
-        with mock.patch.object(style, "ask", return_value=True):
+        with mock.patch.object(style, "confirm", return_value=True):
             _item(self.window._task_menu(custom), "Удалить…").trigger()
         app.processEvents()
         self.assertNotIn("Своя", [z.text for z in tasks.tasks(self.recordings)])
@@ -306,7 +306,7 @@ class TestTasksWindow(BoardCase):
         self.assertEqual((field.text(), self.window.panel.isHidden()), ("", False))
         QTest.keyClick(col, Qt.Key.Key_Escape)  # then it closes the panel
         self.assertTrue(self.window.panel.isHidden())
-        with mock.patch.object(style, "ask", return_value=True) as confirm:
+        with mock.patch.object(style, "confirm", return_value=True) as confirm:
             QTest.keyClick(col, Qt.Key.Key_Delete)
         app.processEvents()
         confirm.assert_called_once()
@@ -328,7 +328,7 @@ class TestTasksWindow(BoardCase):
         custom = tasks.add(self.recordings, "Своя", "Склад")
         self.window.display()
         self.window.open_task(custom)
-        with mock.patch.object(style, "ask", return_value=True):
+        with mock.patch.object(style, "confirm", return_value=True):
             panel.delete.click()
         app.processEvents()
         self.assertTrue(panel.isHidden())
@@ -473,7 +473,7 @@ class TestPlainText(BoardCase):
     def test_task_with_link_asked_as_text(self):
         custom = tasks.add(self.recordings, '<a href="file:///C:/x.exe">Открыть</a>', "Склад")
         self.window.display()
-        with mock.patch.object(style, "ask", return_value=False) as question:
+        with mock.patch.object(style, "confirm", return_value=False) as question:
             _item(self.window._task_menu(custom), "Удалить…").trigger()
         self.assertIn('<a href="file:///C:/x.exe">', question.call_args.args[2])
 

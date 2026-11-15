@@ -229,8 +229,10 @@ class NotebookPage(QWidget):
             self._store(dataclasses.replace(self._current, pinned=not self._current.pinned))
 
     def _set_project(self, project: str) -> None:
-        if self.save() and self._current.id and project != self._current.project:
-            self._store(dataclasses.replace(self._current, project=project))
+        if not self.save() or not self._current.id or project == self._current.project:
+            return
+        if self._store(dataclasses.replace(self._current, project=project)) and not self._matches(self._current):
+            self._open(self._first())
 
     def _toolbar(self) -> QWidget:
         bar = QWidget()
@@ -474,7 +476,8 @@ class NotebookPage(QWidget):
         active = note.id == self._current.id
         name = (self.title.text().strip() if active else note.title) or tr("Untitled note")
         heading = tr("Delete note…")
-        if not style.ask(self, heading, tr('Permanently delete the note "{name}"?', name=name), warning=True):
+        message = tr('Permanently delete the note "{name}"?', name=name)
+        if not style.confirm(self, heading, message, tr("Delete")):
             return
         try:
             notebook.delete(self.recordings, self._current if active else note)

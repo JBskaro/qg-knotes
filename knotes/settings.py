@@ -103,8 +103,7 @@ class Settings:
     hide_personal_data: bool = True  # phones, e-mails, INN and the like go to a cloud minutes model as labels
     hide_names: bool = False  # people's names too: the model cannot write full names and assignees then
     tips_shown: list[str] = dataclasses.field(default_factory=list)  # from ALL_TIPS
-    check_for_updates: bool = True  # once a day ask GitHub whether a newer version is out
-    updates_checked: str = ""  # ISO date of the last successful check
+    check_for_updates: bool = True
 
     @property
     def recordings(self) -> pathlib.Path:

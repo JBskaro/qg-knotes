@@ -11,7 +11,7 @@ import logging
 import pathlib
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from knotes import catalog, failures, providers, spending, summary_report
@@ -24,6 +24,7 @@ from knotes.ui.summary_filters import Filters
 from knotes.ui.summary_table import MeetingsTable
 
 log = logging.getLogger(__name__)
+SPENDING_POLL_MS = 2_000
 
 
 class Tile(QFrame):
@@ -79,9 +80,12 @@ class SummaryWindow(QWidget):
         self.recordings, self._fetch_balance, self._provider = recordings, fetch_balance, provider
         self._displayed = False
         self._balance_arrived.connect(self._show_balance)
-        # read once: the filters and the balance count from memory, not from the folder again
-        self._all_meetings = catalog.list_(recordings)
-        self._all_expenses = self._read_spending()
+        self._spending_revision = spending.revision(recordings)
+        self._reading_spending = False
+        self._all_meetings, self._all_expenses, self._spending_error = self._read_data()
+        self._spending_timer = QTimer(self, interval=SPENDING_POLL_MS)
+        self._spending_timer.timeout.connect(self._poll_spending)
+        self._spending_timer.start()
         known, project_looks = projects
         self._project_looks = project_looks
         self.filters = Filters(catalog.projects(self._all_meetings, list(known)), project_looks, project)
@@ -106,15 +110,39 @@ class SummaryWindow(QWidget):
         self._build()
         self._paint()
 
-    def _read_spending(self) -> list[spending.Expense]:
-        """The spending log; one that cannot be read leaves the meeting prices, and "Spent" says why."""
-        self._spending_error = ""
+    def _read_data(self) -> tuple[list[catalog.Meeting], list[spending.Expense], str]:
+        meetings = catalog.list_(self.recordings)
         try:
-            return spending.list_(self.recordings, self._all_meetings)
+            return meetings, spending.list_(self.recordings, meetings), ""
         except (OSError, ValueError) as error:
             log.warning("the spending log was not read: %s", error)
-            self._spending_error = tr("The spending log was not read: {reason}", reason=failures.text(error))
-            return spending.from_meetings(self._all_meetings)
+            reason = tr("The spending log was not read: {reason}", reason=failures.text(error))
+            return meetings, spending.from_meetings(meetings), reason
+
+    def _poll_spending(self) -> None:
+        if self._reading_spending or not self.isVisible():
+            return
+        stamp = spending.revision(self.recordings)
+        if stamp == self._spending_revision and not self._spending_error:
+            return
+        self._reading_spending = True
+        run_in_background(
+            QThreadPool.globalInstance(), self._read_data, lambda result: self._spending_read(stamp, result)
+        )
+
+    def _spending_read(self, stamp: tuple, result: object) -> None:
+        self._reading_spending = False
+        if isinstance(result, Exception):
+            log.warning("cannot refresh spending: %s", result)
+            return
+        self._spending_revision = stamp
+        meetings, expenses, error = result
+        if error and error == self._spending_error:
+            return
+        if not error:
+            self._all_meetings, self._all_expenses = meetings, expenses
+        self._spending_error = error
+        self.display()
 
     def _build(self) -> None:
         top = QHBoxLayout()
@@ -198,8 +226,7 @@ class SummaryWindow(QWidget):
         run_in_background(QThreadPool.globalInstance(), self._fetch_balance, self._balance_arrived.emit)
 
     def display(self) -> None:
-        """Figures, charts and projects for the selected period and project, from the meetings and spending read when
-        the window opened."""
+        """Render the current snapshot for the selected dates and project."""
         selection = self.filters.selection()
         report = summary_report.report(self._all_meetings, self._all_expenses, selection, datetime.date.today())
         self._displayed = True

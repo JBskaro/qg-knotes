@@ -190,11 +190,8 @@ def by_meetings(
     for name in names:
         meeting_spending = by_name.get(name, [])
         if (v := exists.get(name)) is not None:
-            lines.append(
-                SummaryRow(
-                    v.folder, v.display_title, v.date, v.seconds, result([v], None, datetime.date.max, meeting_spending)
-                )
-            )
+            outcome = result([v], s, by, meeting_spending)
+            lines.append(SummaryRow(v.folder, v.display_title, v.date, outcome.seconds, outcome))
         else:
             title = meeting_spending[-1].title or catalog.default_title(pathlib.Path(name), view_state=True)
             lines.append(
@@ -203,7 +200,7 @@ def by_meetings(
                     title,
                     min(t_.when for t_ in meeting_spending),
                     0.0,
-                    result([], None, datetime.date.max, meeting_spending),
+                    result([], s, by, meeting_spending),
                 )
             )
     return lines

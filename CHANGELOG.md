@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.1 - 2026-11-15
+
+- Check for updates at startup and in the background. Show the sidebar button only when the release has a matching package with a checksum, and confirm before downloading.
+- Make Esc and the default Enter action cancel note and task deletion.
+- Keep selected task cards, their status, and card edits when the wording in the minutes changes. Show items with the same wording and different assignees separately.
+- Refresh spending while the summary is open and retain new charges in a reserve journal if the main journal cannot be written.
+- Count spending by payment date and meeting duration by meeting date in the summary table.
+- Keep the editor in sync with the notebook project filter after moving a note.
+
 ## 0.23.0 - 2026-11-15
 
 - Add a standalone notebook with formatting, project filters, archive, deletion, and restoration of the last note and cursor.

@@ -107,6 +107,28 @@ class TestSpendingLog(unittest.TestCase):
         spending.write(self.folder, catalog.SPEECH, "scribe", 0.04)
         self.assertAlmostEqual(self._total(), 0.19)
 
+    def test_paid_minutes_are_counted_when_the_main_journal_cannot_be_written(self):
+        write = transcript.write_text
+
+        def fail_journal(path, text):
+            if path == self.recordings / spending.FILE:
+                raise PermissionError("test only")
+            write(path, text)
+
+        with (
+            mock.patch.object(transcript, "write_text", side_effect=fail_journal),
+            mock.patch.object(providers, "_send_json", return_value=_model_response(0.06)),
+            self.assertLogs(spending.log, "WARNING"),
+        ):
+            minutes.compose(self.folder, self.params)
+        self.assertAlmostEqual(self._total(), 0.19)
+        self.assertTrue((self.recordings / spending.RESERVE).exists())
+        spending.write(self.folder, catalog.MINUTES_KIND, "claude", 0.06)
+        self.assertAlmostEqual(self._total(), 0.25)
+        self.assertAlmostEqual(self._total(), 0.25)
+        shutil.rmtree(self.folder)
+        self.assertAlmostEqual(self._total(), 0.25)
+
     def test_free_is_not_logged(self):
         spending.write(self.folder, catalog.SPEECH, "локальная", 0.0)
         self.assertFalse((self.recordings / spending.FILE).exists())
@@ -145,6 +167,14 @@ class TestSummaryBySpending(unittest.TestCase):
             [(self.september.display_title, True, 0.05), ("Удаленная планерка", False, 0.07)],
         )
         self.assertAlmostEqual(sum(s.result.cost for s in lines), 0.12)  # the rows add up to the total
+        self.assertEqual([(row.seconds, row.result.meetings_count) for row in lines], [(0, 0), (0, 0)])
+        self.assertEqual([row.result.seconds for row in lines], [0, 0])
+
+        (earlier,) = summary.by_meetings(
+            [self.september], datetime.date(2026, 9, 1), datetime.date(2026, 10, 1), self.spending
+        )
+        self.assertEqual((earlier.seconds, earlier.result.seconds, earlier.result.meetings_count), (1200, 1200, 1))
+        self.assertAlmostEqual(earlier.result.cost, 0.10)
 
 
 if __name__ == "__main__":

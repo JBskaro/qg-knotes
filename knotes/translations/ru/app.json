@@ -128,6 +128,8 @@
  "Version {version}. Once downloaded, the program restarts.": "Версия {version}. Когда скачается, программа перезапустится.",
  "The program's releases on GitHub are not available.": "Выпуски программы на GitHub недоступны.",
  "Update available": "Доступно обновление",
+ "Install version {version}? The app will restart after downloading.": "Установить версию {version}? После загрузки приложение перезапустится.",
+ "Update": "Обновить",
  "Cannot install the update": "Обновление не поставить",
  "The update did not download": "Обновление не скачалось",
  "The update was not installed: the program files are in use. The previous version is in place, start it and update again.": "Обновление не установилось: файлы программы заняты. Прежняя версия на месте, запустите ее и повторите обновление.",

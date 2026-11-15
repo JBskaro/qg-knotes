@@ -8,10 +8,12 @@ import json
 import logging
 import math
 import pathlib
+from collections.abc import Iterator
 
 from knotes import catalog, disk_names, transcript
 
 FILE = pathlib.Path(".узелок", "траты.jsonl")  # in the recordings folder; one line per expense, new ones appended
+RESERVE = pathlib.Path(".траты-резерв.jsonl")
 log = logging.getLogger(__name__)
 
 
@@ -65,24 +67,40 @@ def _from_line(line: str) -> Expense | None:
         return None
 
 
-def list_(recordings: pathlib.Path, meetings: list[catalog.Meeting]) -> list[Expense]:
-    """All expenses of a recordings folder; project and title as the meeting has them now, for a deleted one as of
-    the expense. No log yet: expenses by the meeting prices."""
-    path = recordings / FILE
+def _content(path: pathlib.Path) -> str:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return from_meetings(meetings)
+        return ""
+
+
+def _rows(content: str) -> Iterator[Expense]:
+    return (expense for line in content.splitlines() if line.strip() and (expense := _from_line(line)))
+
+
+def revision(recordings: pathlib.Path) -> tuple[tuple[int, int] | None, ...]:
+    """Lightweight change check for the open summary, including the reserve journal."""
+    stamps = []
+    for name in (FILE, RESERVE):
+        try:
+            info = (recordings / name).stat()
+        except OSError:
+            stamps.append(None)
+        else:
+            stamps.append((info.st_mtime_ns, info.st_size))
+    return tuple(stamps)
+
+
+def list_(recordings: pathlib.Path, meetings: list[catalog.Meeting]) -> list[Expense]:
+    """Both journals contain distinct charges. The meeting's current project and title take precedence."""
     exists = {v.folder.name: v for v in meetings}
     result = []
-    for line in lines:
-        expense = _from_line(line) if line.strip() else None
-        if expense is None:
-            continue
-        if (meeting := exists.get(expense.meeting)) is not None:
-            expense = dataclasses.replace(expense, project=meeting.project, title=meeting.custom_title)
-        result.append(expense)
-    return result or from_meetings(meetings)
+    for name in (FILE, RESERVE):
+        for expense in _rows(_content(recordings / name)):
+            if (meeting := exists.get(expense.meeting)) is not None:
+                expense = dataclasses.replace(expense, project=meeting.project, title=meeting.custom_title)
+            result.append(expense)
+    return sorted(result, key=lambda expense: expense.when.isoformat()) or from_meetings(meetings)
 
 
 def write(folder: pathlib.Path, kind: str, model: str, how_many: float, when: datetime.datetime | None = None) -> None:
@@ -101,18 +119,36 @@ def write(folder: pathlib.Path, kind: str, model: str, how_many: float, when: da
 
 
 def add(recordings: pathlib.Path, expense: Expense) -> None:
-    """An expense to the log; one of no meeting (the meeting prep) has an empty meeting and its own title. Under the
-    folder lock: the window's background threads and the MCP server append one at a time, and the log is started
-    once."""
+    """Log each charge once. A failure to write the main journal falls back to a separate file."""
     if not math.isfinite(expense.how_many) or expense.how_many <= 0:
         return
-    path = recordings / FILE
-    path.parent.mkdir(exist_ok=True)
-    with transcript.locked(path):
-        content = path.read_text(encoding="utf-8") if path.exists() else ""
-        if not any(_from_line(line) for line in content.splitlines() if line.strip()):
-            previous = from_meetings(catalog.list_(recordings))
-            content = "".join(_to_line(item) + "\n" for item in previous)
-        if content and not content.endswith("\n"):
-            content += "\n"
-        transcript.write_text(path, content + _to_line(expense) + "\n")
+    primary, reserve = recordings / FILE, recordings / RESERVE
+    with transcript.locked(reserve):
+        content = _journal_contents(primary, reserve)
+        seed = ""
+        if all(isinstance(value, str) and next(_rows(value), None) is None for value in content.values()):
+            seed = "".join(_to_line(item) + "\n" for item in from_meetings(catalog.list_(recordings)))
+        line = seed + _to_line(expense) + "\n"
+        try:
+            primary.parent.mkdir(exist_ok=True)
+            _append(primary, content[primary], line)
+        except (OSError, UnicodeError) as error:
+            log.warning("could not write the spending log, using the reserve: %s", error)
+            _append(reserve, content[reserve], line)
+
+
+def _journal_contents(*files: pathlib.Path) -> dict[pathlib.Path, str | OSError | UnicodeError]:
+    contents = {}
+    for path in files:
+        try:
+            contents[path] = _content(path)
+        except (OSError, UnicodeError) as error:
+            contents[path] = error
+    return contents
+
+
+def _append(path: pathlib.Path, content: str | OSError | UnicodeError, line: str) -> None:
+    if isinstance(content, Exception):
+        raise content
+    separator = "\n" if content and not content.endswith("\n") else ""
+    transcript.write_text(path, content + separator + line)
