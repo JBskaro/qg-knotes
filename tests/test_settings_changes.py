@@ -12,12 +12,12 @@ class TestEdits(unittest.TestCase):
         start = settings.Settings(projects=["Склад"], theme="система")
         edits = settings_changes.Edits(start)
         window_copy = dataclasses.replace(start)
-        current = dataclasses.replace(start, projects=["Остатки"], bar_collapsed=True, updates_checked="2026-10-27")
+        current = dataclasses.replace(start, projects=["Остатки"], bar_collapsed=True, check_for_updates=False)
         window_copy = dataclasses.replace(window_copy, theme="темная")
         current = edits.apply(current, window_copy)
         self.assertEqual(
-            (current.theme, current.projects, current.bar_collapsed, current.updates_checked),
-            ("темная", ["Остатки"], True, "2026-10-27"),
+            (current.theme, current.projects, current.bar_collapsed, current.check_for_updates),
+            ("темная", ["Остатки"], True, False),
         )
         window_copy = dataclasses.replace(window_copy, hotkey="Ctrl+Alt+Q")  # the theme is not sent again as new
         current = edits.apply(dataclasses.replace(current, theme="светлая"), window_copy)

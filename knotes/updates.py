@@ -105,7 +105,8 @@ def installed(folder: pathlib.Path | None = None) -> bool:
 
 def asset_for(release: Release, by_setup: bool) -> Asset | None:
     suffix = "-setup.exe" if by_setup else ".zip"
-    return next((a for a in release.assets if a.name.startswith("QG-Knotes-") and a.name.endswith(suffix)), None)
+    name = f"QG-Knotes-{release.version.removeprefix('v')}{suffix}"
+    return next((asset for asset in release.assets if asset.name == name and asset.size > 0), None)
 
 
 def updates_folder() -> pathlib.Path:
@@ -117,7 +118,14 @@ def download(
 ) -> pathlib.Path:
     """The release file, checked by the sha256 GitHub gave for it; a file without one is not downloaded: its size
     alone would not reveal a swapped file."""
-    if not asset.sha256:
+    verify_checksum(asset)
+    return models.download_file(
+        updates_folder(), models.File(asset.name, asset.size, asset.sha256, (asset.url,)), progress, cancel
+    )
+
+
+def verify_checksum(asset: Asset) -> None:
+    if not models.SHA256.fullmatch(asset.sha256):
         log.warning("update %s: GitHub gave no sha256", asset.name)
         raise providers.ProviderError(
             tr(
@@ -126,9 +134,6 @@ def download(
                 name=asset.name,
             )
         )
-    return models.download_file(
-        updates_folder(), models.File(asset.name, asset.size, asset.sha256, (asset.url,)), progress, cancel
-    )
 
 
 def run_setup(setup: pathlib.Path) -> None:

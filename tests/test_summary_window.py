@@ -136,6 +136,22 @@ class TestSummaryWindow(unittest.TestCase):
         self.assertEqual((meetings.call_count, log_.call_count, charts.call_count), (1, 1, 1))
         self.assertEqual(window.tiles[0].value.text(), "0,50 $")
 
+    def test_new_expense_refreshes_the_open_summary(self):
+        self.window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        self.window.show()
+        tile = self.window.tiles[0]
+        self.window.filters._pick_project("Склад")
+        self.assertEqual(tile.value.text(), "0,10 $")
+        folder = next(v.folder for v in catalog.list_(self.recordings) if v.project == "Склад")
+        spending.write(folder, catalog.MINUTES_KIND, "claude", 0.25)
+        self.window._spending_timer.timeout.emit()
+        for _ in range(100):
+            if tile.value.text() == "0,35 $":
+                break
+            QTest.qWait(20)
+        self.assertEqual(tile.value.text(), "0,35 $")
+        self.assertEqual(self.window.filters.project, "Склад")
+
     def test_typed_dates_counted_once_they_stop(self):
         filters = self.window.filters
         filters._pick_period(summary.CUSTOM)

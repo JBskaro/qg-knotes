@@ -233,16 +233,43 @@ class TestMeetingsList(unittest.TestCase):
         self.assertIsNone(self.window.page)
         self.assertEqual(self.window.project, "Склад")
 
+    def test_notebook_moving_note_keeps_editor_within_current_project_filter(self):
+        first = notebook.save(self.recordings, notebook.Note(title="Первая", project="Склад"), notebook.Note())
+        second = notebook.save(self.recordings, notebook.Note(title="Вторая", project="Склад"), notebook.Note())
+        page = NotebookPage(self.recordings, ["Склад", "Офис"])
+        self.addCleanup(page.close)
+        page._select_project("Склад")
+        page._open(first)
+        page.body.insertPlainText("Сохранить перед переносом")
+
+        page._set_project("Офис")
+        self.assertEqual((page.project_button.text(), page.title.text()), ("Склад", "Вторая"))
+        self.assertEqual(page.list_.count(), 1)
+        self.assertEqual(page.list_.currentItem().text(), second.title)
+
+        page._set_project("Офис")
+        self.assertEqual((page.project_button.text(), page.list_.count(), page.title.text()), ("Склад", 0, ""))
+        self.assertEqual(page._current.project, "Склад")
+
+        page._select_project(None)
+        moved = next(z for z in notebook.list_(self.recordings) if z.id == first.id)
+        self.assertEqual(moved.project, "Офис")
+        page._open(moved)
+        self.assertEqual(page.body.toPlainText(), "Сохранить перед переносом")
+        page._set_project("Склад")
+        self.assertEqual(page._current.id, first.id)
+        self.assertEqual(page.list_.currentItem().text(), first.title)
+
     def test_notebook_delete_targets_the_clicked_note_and_keeps_other_edits(self):
         first = notebook.save(self.recordings, notebook.Note(title="Первая"), notebook.Note())
         second = notebook.save(self.recordings, notebook.Note(title="Вторая", pinned=True), notebook.Note())
         page = NotebookPage(self.recordings, [])
         self.addCleanup(page.close)
         page.title.setText("Правка второй")
-        with mock.patch.object(style, "ask", return_value=False):
+        with mock.patch.object(style, "confirm", return_value=False):
             page._delete(first)
         self.assertEqual(notebook.list_(self.recordings), [second, first])
-        with mock.patch.object(style, "ask", return_value=True):
+        with mock.patch.object(style, "confirm", return_value=True):
             page._delete(first)
             self.assertEqual(page.title.text(), "Правка второй")
             self.assertTrue(page.save())

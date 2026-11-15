@@ -99,7 +99,6 @@ LEGACY_NAMES = {
     "title": "название",
     "started": "начало",
     "ui_language": "язык_интерфейса",
-    "updates_checked": "обновление_проверено",
     "url": "ссылка",
     "variable": "переменная",
     "video_quality": "качество_видео",

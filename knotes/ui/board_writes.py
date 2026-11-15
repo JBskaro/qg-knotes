@@ -36,6 +36,6 @@ def delete_task(parent_: QWidget, recordings: pathlib.Path, task: tasks.Task) ->
     message = language.tr("Delete task “{text}”?", text=task.text)
     if not task.custom:
         message += "\n\n" + language.tr("The item will stay in the minutes.")
-    if not style.ask(parent_, language.tr("Delete task"), message, warning=True):
+    if not style.confirm(parent_, language.tr("Delete task"), message, language.tr("Delete")):
         return False
     return safely(parent_, lambda: tasks.delete(recordings, task.key))

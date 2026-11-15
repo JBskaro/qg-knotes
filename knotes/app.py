@@ -61,8 +61,8 @@ WAIT_RECORDING_MS = 60_000  # on exit: how long the recording may take to be sav
 WAIT_BACKGROUND_S = 5  # after the windows close: how long recognition and minutes may take to finish
 CLEANUP_MS = 6 * 3600 * 1000  # how often to check whether old audio is due for deletion
 WAIT_ANSWER_S = 300  # "Send for transcription?" stays longer than a usual toast
-UPDATES_AFTER_MS = 15_000  # the first check waits until the program has started
-UPDATES_EVERY_MS = 6 * 3600 * 1000  # the program may run for days; one check a day still holds
+UPDATES_AFTER_MS = 5_000
+UPDATE_TIMER_MS = 60_000
 SCHEMES = {"светлая": Qt.ColorScheme.Light, "темная": Qt.ColorScheme.Dark}
 
 
@@ -168,10 +168,9 @@ class App(QObject):
         self.jobs.minutes_written.connect(self._minutes_result)
         self.jobs.progress_shown.connect(self.window.show_progress)
         self.updates.notice.connect(self.notify)
-        self.updates.checked.connect(self._updates_checked)
         self.updates.offered.connect(self._offer_update)
         self.updates.current.connect(self._clear_update)
-        self.window.update_requested.connect(self._install_available_update)
+        self.window.update_requested.connect(self._confirm_update)
         self.updates.downloading.connect(lambda active: self.window.update_button.setEnabled(not active))
         self.updates.started.connect(self.quit_app)
 
@@ -237,32 +236,36 @@ class App(QObject):
         if updates.frozen():
             updates.cleanup()
         QTimer.singleShot(UPDATES_AFTER_MS, self.check_updates)
-        self._timers.append(self._timer(UPDATES_EVERY_MS, self.check_updates))
+        self._timers.append(self._timer(UPDATE_TIMER_MS, self.check_updates))
 
     # --- updates ------------------------------------------------------------------------------------------------
 
     def check_updates(self, manual: bool = False) -> None:
-        """Once a day by itself (only the build can update itself), or manually from the tray or settings."""
         self.updates.check(self.settings, manual)
-
-    def _updates_checked(self, today: str) -> None:
-        if self.settings.updates_checked != today:
-            self.settings = dataclasses.replace(self.settings, updates_checked=today)
-            settings.save(self.settings)
 
     def _offer_update(self, release: updates.Release, manual: bool) -> None:
         self._available_update = release
         self.window.show_update(release.version)
         if manual:
             self.show_window()
+            self._confirm_update()
 
     def _clear_update(self) -> None:
         self._available_update = None
         self.window.show_update("")
 
-    def _install_available_update(self) -> None:
-        if self._available_update is not None:
-            self.updates.install(self._available_update)
+    def _confirm_update(self) -> None:
+        release = self._available_update
+        if release is None or not self.window.update_button.isEnabled():
+            return
+        confirmed = style.confirm(
+            self.window,
+            tr("Update available"),
+            tr("Install version {version}? The app will restart after downloading.", version=release.version),
+            tr("Update"),
+        )
+        if confirmed and self._available_update == release:
+            self.updates.install(release)
 
     # --- first run ----------------------------------------------------------------------------------------------
 
@@ -626,6 +629,7 @@ class App(QObject):
     def show_window(self) -> None:
         self._refresh_window(always=True)
         system.bring_to_front(self.window)
+        self.check_updates()
 
     def open_meeting(self, folder: pathlib.Path, tab: str = "") -> MeetingView | None:
         """The meeting opens in the meetings window right of the list; only one can be open. A meeting opened anew is

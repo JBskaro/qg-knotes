@@ -130,7 +130,7 @@ class InnoScriptTest(unittest.TestCase):
         self.assertIn(
             f"OutputBaseFilename={name.replace(build.VERSION, '{#AppVersion}').removesuffix('.exe')}\n", self.script
         )
-        self.assertTrue(name.startswith("QG-Knotes-") and name.endswith("-setup.exe"))  # updates.asset_for looks for it
+        self.assertEqual(name, f"QG-Knotes-{build.VERSION}-setup.exe")
 
     def test_per_user_install_keeps_app_id(self):
         self.assertIn("PrivilegesRequired=lowest\n", self.script)

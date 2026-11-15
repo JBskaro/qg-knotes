@@ -261,6 +261,51 @@ class TestBoard(unittest.TestCase):
         pending = tasks.review_items(self.meeting)
         self.assertEqual([text for _, text, selected in pending.values() if not selected], ["Новая задача."])
 
+    def test_minutes_edits_keep_task_selection_and_card_fields(self):
+        entries = tasks.review_items(self.meeting)
+        key = next(iter(entries))
+        tasks.review(self.recordings, self.meeting, {key}, set(entries))
+        tasks.edit(self.recordings, key, tasks.Edit(status=tasks.DONE, description="После сверки", priority="срочный"))
+        minutes.write_draft(self.meeting, MINUTES.replace("Доделать загрузку.", "Доделать загрузку остатков."))
+        (card,) = tasks.tasks(self.recordings)
+        self.assertEqual(
+            (card.key, card.text, card.status, card.description, card.priority),
+            (key, "Доделать загрузку остатков.", tasks.DONE, "После сверки", "срочный"),
+        )
+
+    def test_matching_text_with_different_assignees_has_separate_cards(self):
+        text = MINUTES.replace("Проверить коэффициент коробки.", "Доделать загрузку.")
+        minutes.write_draft(self.meeting, text)
+        entries = tasks.review_items(self.meeting)
+        first, second = list(entries)[:2]
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(entries[first][1], entries[second][1])
+        tasks.review(self.recordings, self.meeting, {first, second}, set(entries))
+        tasks.edit(self.recordings, first, tasks.Edit(status=tasks.DONE))
+        lines = text.splitlines()
+        first_line, second_line = (i for i, line in enumerate(lines) if "Доделать загрузку." in line)
+        lines[first_line], lines[second_line] = "1" + lines[second_line][1:], "2" + lines[first_line][1:]
+        minutes.write_draft(self.meeting, "\n".join(lines))
+        cards = {card.who: (card.key, card.status) for card in tasks.tasks(self.recordings)}
+        self.assertEqual(cards, {"Игорь": (first, tasks.DONE), "Дмитрий": (second, tasks.TODO)})
+
+    def test_unsuccessful_minutes_write_keeps_old_keys_and_a_retry_is_safe(self):
+        task = self._by_text()["Доделать загрузку."]
+        tasks.edit(self.recordings, task.key, tasks.Edit(status=tasks.DONE))
+        edited = MINUTES.replace("Доделать загрузку.", "Доделать загрузку остатков.")
+        write = transcript.write_text
+
+        def fail_minutes(path, text):
+            if path.name == minutes.FILE:
+                raise PermissionError("test only")
+            write(path, text)
+
+        with mock.patch.object(transcript, "write_text", side_effect=fail_minutes), self.assertRaises(PermissionError):
+            minutes.write_draft(self.meeting, edited)
+        self.assertEqual(self._by_text()[task.text].status, tasks.DONE)
+        minutes.write_draft(self.meeting, edited)
+        self.assertEqual(self._by_text()["Доделать загрузку остатков."].key, task.key)
+
     def test_archive(self):
         first = tasks.tasks(self.recordings)[0]
         tasks.edit(self.recordings, first.key, tasks.Edit(archive=True))

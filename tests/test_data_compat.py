@@ -60,6 +60,7 @@ class TestLegacyData(unittest.TestCase):
         previous_items |= {"скрывать_личные_данные": True, "скрывать_имена": False}  # fields added after 0.21
         previous_items["расшифровка_во_время_встречи"] = False  # a later setting, written with its default
         previous_items["local_gpu"] = True
+        del previous_items["обновление_проверено"]
         self.assertEqual(json.loads(file.read_text(encoding="utf-8")), previous_items)  # the same file format
 
     def test_meeting(self):

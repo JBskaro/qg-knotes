@@ -4,7 +4,6 @@ the installer or the swap of the portable copy."""
 
 import contextlib
 import dataclasses
-import datetime
 import pathlib
 import unittest
 from collections.abc import Callable
@@ -12,7 +11,7 @@ from unittest import mock
 
 from knotes import VERSION, settings, update_flow, updates
 
-FILE = updates.Asset("QG-Knotes-setup.exe", "https://example.org/setup.exe", 10, "00")
+FILE = updates.Asset("QG-Knotes-99.0.0-setup.exe", "https://example.org/setup.exe", 10, "a" * 64)
 
 
 def release(version: str, notes: str = "") -> updates.Release:
@@ -33,14 +32,14 @@ class TestUpdates(unittest.TestCase):
         self.busy = False
         self.flow = update_flow.Updates(lambda: self.busy)
         self.notices: list[str] = []
-        self.checked: list[str] = []
+        self.now = 1_000.0
         self.offered: list[tuple] = []
         self.started: list[bool] = []
         self.flow.notice.connect(lambda heading, _text: self.notices.append(heading))
-        self.flow.checked.connect(self.checked.append)
         self.flow.offered.connect(lambda release_, manual: self.offered.append((release_.version, manual)))
         self.flow.started.connect(lambda: self.started.append(True))
         for patch in (
+            mock.patch.object(update_flow, "time", monotonic=lambda: self.now),
             mock.patch.object(update_flow, "run_in_background", at_once),
             mock.patch.object(update_flow.updates, "frozen", return_value=True),
             mock.patch.object(update_flow.updates, "installed", return_value=True),
@@ -51,35 +50,52 @@ class TestUpdates(unittest.TestCase):
     def _latest(self, answer: object) -> mock._patch:
         return mock.patch.object(update_flow.updates, "latest", side_effect=[answer])
 
-    def test_check_by_itself_once_a_day_in_the_build_only(self):
-        today = datetime.date.today().isoformat()
-        for config in (
-            settings.Settings(check_for_updates=False),
-            settings.Settings(updates_checked=today),
-        ):
-            with self.subTest(config=config), mock.patch.object(update_flow.updates, "latest") as latest:
-                self.flow.check(config)
-            latest.assert_not_called()
-        with (
-            mock.patch.object(update_flow.updates, "frozen", return_value=False),
-            mock.patch.object(update_flow.updates, "latest") as latest,
-        ):
-            self.flow.check(settings.Settings())
+    def test_automatic_check_requires_the_build_and_enabled_setting(self):
+        with mock.patch.object(update_flow.updates, "latest") as latest:
+            self.flow.check(settings.Settings(check_for_updates=False))
+            with mock.patch.object(update_flow.updates, "frozen", return_value=False):
+                self.flow.check(settings.Settings())
         latest.assert_not_called()
-        with self._latest(release("99.0.0", "\n - Заметки встречи\n- Другое")):
-            self.flow.check(settings.Settings(updates_checked=today), manual=True)
-        self.assertEqual(self.checked, [""])
+        with self._latest(release("99.0.0")):
+            self.flow.check(settings.Settings(check_for_updates=False), manual=True)
         self.assertEqual(self.offered, [("99.0.0", True)])
 
-    def test_pending_release_is_checked_again_after_restart(self):
+    def test_automatic_check_finds_a_release_published_while_app_is_open(self):
         config = settings.Settings()
-        with mock.patch.object(update_flow.updates, "latest", return_value=release("99.0.0")) as latest:
+        with mock.patch.object(updates, "latest", side_effect=[release(VERSION), release("99.0.0")]) as latest:
             self.flow.check(config)
+            self.now += update_flow.CHECK_INTERVAL_S - 1
             self.flow.check(config)
-            restarted = update_flow.Updates(lambda: False)
-            restarted.check(dataclasses.replace(config, updates_checked=self.checked[-1]))
+            latest.assert_called_once_with()
+            self.now += 1
+            self.flow.check(config)
         self.assertEqual(latest.call_count, 2)
         self.assertEqual(self.offered, [("99.0.0", False)])
+
+    def test_failed_automatic_check_retries_soon(self):
+        config = settings.Settings()
+        with (
+            mock.patch.object(updates, "latest", side_effect=[OSError("network"), release("99.0.0")]) as latest,
+            self.assertLogs(update_flow.log, "WARNING"),
+        ):
+            self.flow.check(config)
+            self.now += update_flow.RETRY_INTERVAL_S - 1
+            self.flow.check(config)
+            latest.assert_called_once_with()
+            self.now += 1
+            self.flow.check(config)
+        self.assertEqual(self.offered, [("99.0.0", False)])
+        self.assertEqual(self.notices, [])
+
+    def test_manual_check_joins_a_running_automatic_check(self):
+        config = settings.Settings()
+        with mock.patch.object(update_flow, "run_in_background") as run:
+            self.flow.check(config)
+            self.flow.check(config, manual=True)
+        self.assertEqual(run.call_count, 1)
+        on_result = run.call_args.args[2]
+        on_result(release("99.0.0"))
+        self.assertEqual(self.offered, [("99.0.0", True)])
 
     def test_what_a_manual_check_tells(self):
         """Without a newer release, or without an answer, a check from the tray menu says so; by itself it is
@@ -90,12 +106,41 @@ class TestUpdates(unittest.TestCase):
             (OSError(5, "сеть"), "Обновления не проверить"),
         ):
             for manual in (False, True):
+                self.now += update_flow.CHECK_INTERVAL_S
                 self.notices.clear()
                 with self.subTest(answer=answer, manual=manual), self._latest(answer), self.assertNoLogs(level="ERROR"):
                     self.flow.check(settings.Settings(), manual)
                 self.assertEqual(self.notices, [heading] if manual else [])
         self.assertEqual(self.offered, [])
-        self.assertEqual(len(self.checked), 3)  # the failed requests do not count as a check
+
+    def test_newer_release_without_a_verified_file_is_not_offered_and_retried(self):
+        config = settings.Settings()
+        valid = release("99.0.0")
+        for assets in ((), (dataclasses.replace(FILE, sha256=""),), (dataclasses.replace(FILE, size=0),)):
+            with self.subTest(assets=assets), self._latest(dataclasses.replace(valid, assets=assets)):
+                self.flow.check(config, manual=True)
+            self.assertEqual(self.offered, [])
+            self.assertEqual(self.notices[-1], "Обновление не поставить")
+        self.now += update_flow.RETRY_INTERVAL_S
+        with self._latest(valid):
+            self.flow.check(config)
+        self.assertEqual(self.offered, [("99.0.0", False)])
+
+    def test_portable_release_requires_the_portable_archive(self):
+        archive = dataclasses.replace(FILE, name="QG-Knotes-99.0.0.zip")
+        with (
+            mock.patch.object(updates, "installed", return_value=False),
+            mock.patch.object(
+                updates,
+                "latest",
+                side_effect=[release("99.0.0"), dataclasses.replace(release("99.0.0"), assets=(archive,))],
+            ),
+        ):
+            self.flow.check(settings.Settings())
+            self.assertEqual(self.offered, [])
+            self.now += update_flow.RETRY_INTERVAL_S
+            self.flow.check(settings.Settings())
+        self.assertEqual(self.offered, [("99.0.0", False)])
 
     def test_install_not_during_work_and_only_in_the_build(self):
         self.busy = True

@@ -44,19 +44,50 @@ def program_for(test: unittest.TestCase) -> app.App:
 
 
 class TestUpdateButton(unittest.TestCase):
-    def test_new_release_click_starts_install_without_confirmation(self):
+    def test_automatic_offer_installs_only_after_confirmation(self):
         program = program_for(self)
         release = updates.Release("99.0.0", "", "", ())
         button = program.window.update_button
-        self.assertTrue(button.isHidden())
-        program.updates.offered.emit(release, False)
-        self.assertFalse(button.isHidden())
-        program._notify_with_buttons.assert_not_called()
-        with mock.patch.object(program.updates, "install") as install:
+
+        questions = []
+
+        def answer(box):
+            questions.append(box.text())
+            self.assertIn(release.version, box.text())
+            cancel = box.defaultButton()
+            self.assertEqual(box.buttonRole(cancel), QMessageBox.ButtonRole.RejectRole)
+            self.assertIs(box.escapeButton(), cancel)
+            next(b for b in box.buttons() if box.buttonRole(b) == self.role).click()
+
+        with (
+            mock.patch.object(program.updates, "install") as install,
+            mock.patch.object(QMessageBox, "exec", answer),
+        ):
+            self.assertTrue(button.isHidden())
+            program.updates.offered.emit(release, False)
+            self.assertFalse(button.isHidden())
+            self.assertEqual(questions, [])
+            self.role = QMessageBox.ButtonRole.RejectRole
             button.click()
-        install.assert_called_once_with(release)
+            install.assert_not_called()
+            self.assertFalse(button.isHidden())
+            self.role = QMessageBox.ButtonRole.AcceptRole
+            button.click()
+            install.assert_called_once_with(release)
+            self.assertEqual(len(questions), 2)
         program.updates.current.emit()
         self.assertTrue(button.isHidden())
+
+    def test_manual_check_opens_confirmation_immediately(self):
+        program = program_for(self)
+        release = updates.Release("99.0.0", "", "", ())
+        with (
+            mock.patch.object(program, "show_window") as show,
+            mock.patch.object(program, "_confirm_update") as confirm,
+        ):
+            program.updates.offered.emit(release, True)
+        show.assert_called_once_with()
+        confirm.assert_called_once_with()
 
 
 class TestStopOnFullDisk(unittest.TestCase):

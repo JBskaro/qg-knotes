@@ -17,7 +17,11 @@ import json
 import logging
 import pathlib
 import re
+import uuid
+from collections import Counter, defaultdict, deque
 from collections.abc import Callable
+from difflib import SequenceMatcher
+from typing import NamedTuple
 
 from knotes import notes, catalog, privacy, projects, providers, transcript, spending, kinds, language
 from knotes import settings
@@ -225,29 +229,55 @@ def assistant_request(folder: pathlib.Path) -> str:
 def save(folder: pathlib.Path, text: str, model: str, cost: float = 0.0) -> pathlib.Path:
     """The draft into the meeting folder without a code-block wrapper; who wrote it and what it cost."""
     file = folder / FILE
-    write_draft(folder, _unwrapped(text))
+    write_draft(folder, _unwrapped(text), rewritten=True)
     catalog.set_(folder, minutes_cost=round(cost, 5) or None, minutes_model=model)
     return file
 
 
-def write_draft(folder: pathlib.Path, text: str) -> None:
-    """Write under the meeting lock. Keep the previous protocol as the initial board selection on first edit."""
+class BoardItem(NamedTuple):
+    heading: str
+    item: Item
+    kind: str
+    assignee: str
+
+    def signature(self) -> tuple:
+        return self.heading, self.item.text, self.assignee, self.item.second
+
+    def wording(self) -> tuple[str, str]:
+        return self.heading, self.item.text
+
+    def time_mark(self) -> tuple[str, int] | None:
+        return None if self.item.second is None else (self.heading, self.item.second)
+
+    def slot(self) -> tuple[str, str]:
+        return self.heading, self.item.number
+
+
+def write_draft(folder: pathlib.Path, text: str, rewritten: bool = False) -> None:
+    """Caller holds the meeting lock. Keep both sets of keys so a failed minutes write leaves the old cards intact."""
     file = folder / FILE
-    review = folder / BOARD_REVIEW
-    if not review.exists():
-        try:
-            previous = file.read_text(encoding="utf-8")
-        except (FileNotFoundError, UnicodeError):
-            previous = ""
-        transcript.write_json(review, sorted(board_item_ids(previous)))
+    try:
+        previous = file.read_text(encoding="utf-8")
+    except (FileNotFoundError, UnicodeError):
+        previous = ""
+    previous_items, items = board_items(previous), board_items(text)
+    identities, selected = board_identity(folder, previous, previous_items)
+    next_ids = _match_board_keys(previous_items, items, identities, rewritten)
+    transcript.write_json(
+        folder / BOARD_REVIEW,
+        {
+            "отбор": sorted(identities if selected is None else selected),
+            "версии": {_digest(previous): identities, _digest(text): next_ids},
+        },
+    )
     transcript.write_text(file, text)
 
 
-def board_item_id(heading: str, text: str) -> str:
-    return hashlib.sha256(f"{heading}|{text}".encode()).hexdigest()
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.replace("\r\n", "\n").replace("\r", "\n").encode()).hexdigest()
 
 
-def board_items(text: str) -> list[tuple[str, Item, str, str]]:
+def board_items(text: str) -> list[BoardItem]:
     result = []
     for section in sections(text)[1]:
         board = kinds.description(section.heading).board
@@ -256,12 +286,88 @@ def board_items(text: str) -> list[tuple[str, Item, str, str]]:
                 continue
             confirms = tentative(item.who)
             if board or confirms is not None:
-                result.append((section.heading, item, board, item.who if confirms is None else confirms))
+                result.append(BoardItem(section.heading, item, board, item.who if confirms is None else confirms))
     return result
 
 
-def board_item_ids(text: str) -> set[str]:
-    return {board_item_id(heading, item.text) for heading, item, _, _ in board_items(text)}
+def board_identity(folder: pathlib.Path, text: str, entries: list[BoardItem]) -> tuple[list[str], set[str] | None]:
+    """Local keys and default selection. Old files and cards keep their original keys."""
+    state = transcript.read_json(folder / BOARD_REVIEW, None)
+    keys = _legacy_keys(entries)
+    if isinstance(state, dict):
+        snapshot = state.get("версии", {})
+        saved = snapshot.get(_digest(text)) if isinstance(snapshot, dict) else None
+        if (
+            isinstance(saved, list)
+            and len(saved) == len(entries)
+            and all(isinstance(key, str) for key in saved)
+            and len(set(saved)) == len(saved)
+        ):
+            keys = saved
+        selected = state.get("отбор", [])
+        return keys, {key for key in selected if isinstance(key, str)} if isinstance(selected, list) else set()
+    if isinstance(state, list):
+        selected = {key for key in state if isinstance(key, str)}
+        return keys, {
+            key for key, row in zip(keys, entries, strict=True) if _digest("|".join(row.wording())) in selected
+        }
+    return keys, None
+
+
+def _legacy_keys(entries: list[BoardItem]) -> list[str]:
+    keys = []
+    seen = set()
+    occurrences = Counter()
+    for row in entries:
+        legacy = "|".join(row.wording())
+        if legacy in seen:
+            signature = row.signature()
+            occurrences[signature] += 1
+            legacy = _digest(repr((signature, occurrences[signature])))
+        keys.append(legacy)
+        seen.add("|".join(row.wording()))
+    return keys
+
+
+def _match_board_keys(
+    previous: list[BoardItem], entries: list[BoardItem], identities: list[str], rewritten: bool
+) -> list[str]:
+    """Match unchanged rows first, then unique wording or timestamps. In a manual edit the existing numbered slot
+    can identify a renamed item; rewritten drafts may reuse numbers for unrelated tasks."""
+    exact = defaultdict(deque)
+    for row, key in zip(previous, identities, strict=True):
+        exact[row.signature()].append(key)
+    matched = [exact[row.signature()].popleft() if exact[row.signature()] else "" for row in entries]
+    metrics = (
+        (BoardItem.wording, BoardItem.time_mark)
+        if rewritten
+        else (
+            BoardItem.wording,
+            BoardItem.time_mark,
+            BoardItem.slot,
+        )
+    )
+    original = dict(zip(identities, previous, strict=True))
+    for metric in metrics:
+        used = set(matched)
+        old = [(metric(row), key) for row, key in zip(previous, identities, strict=True) if key not in used]
+        remaining = Counter(metric(row) for row, key in zip(entries, matched, strict=True) if not key)
+        counts = Counter(value for value, _ in old)
+        unique = {value: key for value, key in old if value is not None and counts[value] == remaining[value] == 1}
+        for index, row in enumerate(entries):
+            if (
+                not matched[index]
+                and (key := unique.get(metric(row)))
+                and (metric is not BoardItem.slot or _similar_wording(original[key], row))
+            ):
+                matched[index] = key
+    return [key or uuid.uuid4().hex for key in matched]
+
+
+def _similar_wording(before: BoardItem, after: BoardItem) -> bool:
+    left = before.item.text.casefold()[:500]
+    right = after.item.text.casefold()[:500]
+    return SequenceMatcher(None, left, right).ratio() >= 0.5
 
 
 def compose(folder: pathlib.Path, params_: Params, keep: Callable[[pathlib.Path], None] | None = None) -> pathlib.Path:
@@ -307,7 +413,7 @@ def _paid(
                 keep(folder)
         except OSError:
             log.exception("the previous minutes of %s are not kept", folder.name)
-        write_draft(folder, _unwrapped(text))
+        write_draft(folder, _unwrapped(text), rewritten=True)
     try:
         spending.write(folder, catalog.MINUTES_KIND, model, cost)  # before the new cost goes to the meeting
     except OSError:
