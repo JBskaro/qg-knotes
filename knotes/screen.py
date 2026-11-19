@@ -198,14 +198,16 @@ def capture_command(capture: Capture, file_name: str, encoder: str) -> list[str]
     ]
 
 
-def read_chunks(folder: pathlib.Path) -> list[dict]:
+def read_chunks(folder: pathlib.Path, *, required: bool = False) -> list[dict]:
     """Recorded chunks: only this folder's own chunk names, so a broken list cannot point elsewhere."""
     try:
         data = json.loads((folder / CHUNK_LIST).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        if required:
+            raise
         return []
     if not isinstance(data, list):
-        return []
+        raise ValueError(tr("Invalid screen recording manifest"))
     return [
         c
         for c in data
@@ -296,12 +298,19 @@ class ScreenRecorder:
             self._thread.join()
 
     def _run(self) -> None:
-        while (command := self._commands.get()) != "stop":
-            if command == "close":
-                self._close()
-            else:
-                self._open()
-        self._close()
+        try:
+            while (command := self._commands.get()) != "stop":
+                if command == "close":
+                    self._close()
+                else:
+                    self._open()
+            self._close()
+        except (OSError, ValueError) as error:
+            if self._chunk is not None:
+                self._chunk.finish()
+                self._chunk = None
+            self.error = tr(NOT_RECORDING, reason=failures.text(error).rstrip("."))
+            self.on_error(self.error)
 
     def _open(self) -> None:
         while self._chunk is None and not self.error and self._methods:
@@ -330,9 +339,10 @@ class ScreenRecorder:
             stopped = self.clock()
             if tail := self._chunk.finish():
                 log.info("ffmpeg while recording the screen: %s", tail)
-            if self._chunk.frames:
-                self._set_last_start(stopped - self._chunk.frames / self._fps)
+            frames = self._chunk.frames
             self._chunk = None
+            if frames:
+                self._set_last_start(stopped - frames / self._fps)
 
     def _add_chunk(self, file_name: str, start: float) -> None:
         self._write_chunks([*read_chunks(self.folder), {"файл": file_name, "начало": round(max(start, 0.0), 3)}])
@@ -395,20 +405,26 @@ def assemble_command(chunks: list[dict], audio: list[str], list_file: str, outpu
 def assemble(folder: pathlib.Path) -> None:
     """Join the chunks with the audio tracks into видео.mp4 and remove the chunks. On failure raises OSError or
     CalledProcessError and keeps the chunks."""
-    chunks = [c for c in read_chunks(folder) if (folder / c["файл"]).is_file() and (folder / c["файл"]).stat().st_size]
-    if chunks:
-        audio = [name for name in AUDIO_TRACKS if (folder / name).is_file()]
-        (folder / CONCAT_LIST).write_text(concat_list(chunks), encoding="utf-8")
-        partial = "видео.part.mp4"
-        subprocess.run(
-            assemble_command(chunks, audio, CONCAT_LIST, partial),
-            cwd=folder,
-            capture_output=True,
-            check=True,
-            creationflags=_NO_WINDOW,
-        )
-        os.replace(folder / partial, folder / VIDEO_FILE)
-    for chunk in read_chunks(folder):
+    try:
+        manifest = read_chunks(folder, required=True)
+    except FileNotFoundError:
+        return
+    chunks = [c for c in manifest if (folder / c["файл"]).stat().st_size]
+    if not chunks:
+        (folder / CHUNK_LIST).unlink(missing_ok=True)
+        return
+    audio = [name for name in AUDIO_TRACKS if (folder / name).is_file()]
+    (folder / CONCAT_LIST).write_text(concat_list(chunks), encoding="utf-8")
+    partial = "видео.part.mp4"
+    subprocess.run(
+        assemble_command(chunks, audio, CONCAT_LIST, partial),
+        cwd=folder,
+        capture_output=True,
+        check=True,
+        creationflags=_NO_WINDOW,
+    )
+    os.replace(folder / partial, folder / VIDEO_FILE)
+    (folder / CHUNK_LIST).unlink()
+    for chunk in manifest:
         (folder / chunk["файл"]).unlink(missing_ok=True)
-    for name in (CHUNK_LIST, CONCAT_LIST):
-        (folder / name).unlink(missing_ok=True)
+    (folder / CONCAT_LIST).unlink(missing_ok=True)

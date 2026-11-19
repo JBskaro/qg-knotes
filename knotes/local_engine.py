@@ -231,6 +231,23 @@ def _use_directml(model: Model) -> bool:
     return model.use_gpu and models.supports_gpu(model.kind, model.id_)
 
 
+def _directml(open_view: Callable, arguments: dict) -> tuple[object, str]:
+    # sherpa can return a working CPU recognizer after a native DirectML failure without raising.
+    with tempfile.TemporaryFile() as messages:
+        original = os.dup(2)
+        try:
+            os.dup2(messages.fileno(), 2)
+            recognizer = open_view(**arguments, provider="directml")
+        finally:
+            os.dup2(original, 2)
+            os.close(original)
+            messages.seek(0)
+            diagnostic = messages.read()
+            if diagnostic:
+                log.info("DirectML: %s", diagnostic.decode("utf-8", "replace").strip())
+        return recognizer, "CPU" if b"fallback to cpu" in diagnostic.lower() else "DirectML"
+
+
 class Engine:
     """sherpa-onnx for one model: speech cutting, chunk recognition, speaker diarization of the whole track."""
 
@@ -248,9 +265,10 @@ class Engine:
         _open_item(lambda: so.VoiceActivityDetector(self.vad), model.title)  # a broken VAD fails now, not on audio
         open_view = getattr(so.OfflineRecognizer, kind.method)
         arguments = {**files, **kind.other, "num_threads": thread_count}
+        self.backend = "CPU"
         if _use_directml(model):
             try:
-                self.recognizer = open_view(**arguments, provider="directml")
+                self.recognizer, self.backend = _directml(open_view, arguments)
             except (RuntimeError, MemoryError) as error:
                 log.warning("DirectML could not open %s; using CPU: %s", model.title, error)
                 self.recognizer = _open_item(lambda: open_view(**arguments, provider="cpu"), model.title, model.custom)
@@ -388,8 +406,14 @@ class _Loaded:
 def _run(job: dict, write_text: Callable[[dict], None], loaded: _Loaded) -> int:
     try:
         path, model, diarization = _from_job(job)
+        started = time.monotonic()
         audio, engine = _read(path), loaded.get(model, diarization)
         answer = recognize(audio, model, diarization, lambda s, from_: write_text({"ход": [s, from_]}), engine)
+        answer["исполнение"] = {
+            "режим": engine.backend,
+            "модель": model.id_,
+            "секунд": round(time.monotonic() - started, 2),
+        }
     except providers.ProviderError as error:
         write_text({"ошибка": str(error)})
         return 1

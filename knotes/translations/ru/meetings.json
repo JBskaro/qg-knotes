@@ -102,7 +102,6 @@
  "audio": "звук",
  "calendar": "календарь",
  "less than $0.01": "меньше 0,01 $",
- "found: {n}": "найдено: {n}",
  "not found": "не найдено",
  "about {n} min left": "осталось около {n} мин",
  "speech {speech}, minutes {minutes_list}": "речь {speech}, протоколы {minutes_list}",

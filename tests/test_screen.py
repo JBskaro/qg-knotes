@@ -254,6 +254,17 @@ class TestAssembly(unittest.TestCase):
             sorted(p.name for p in self.folder.iterdir()), ["видео.mp4", "микрофон.flac", "собеседники.flac"]
         )
 
+    def test_manifest_read_failure_preserves_video_for_retry(self):
+        self._chunk("экран_01.mkv", 1)
+        manifest = self.folder / screen.CHUNK_LIST
+        manifest.write_text(json.dumps([{"файл": "экран_01.mkv", "начало": 0}]), encoding="utf-8")
+        with mock.patch.object(pathlib.Path, "read_text", side_effect=PermissionError), self.assertRaises(OSError):
+            screen.assemble(self.folder)
+        self.assertTrue(manifest.is_file())
+        self.assertTrue((self.folder / "экран_01.mkv").is_file())
+        screen.assemble(self.folder)
+        self.assertTrue((self.folder / screen.VIDEO_FILE).is_file())
+
     def test_failed_assembly_keeps_chunks(self):
         (self.folder / "экран_01.mkv").write_bytes(b"not a video")
         (self.folder / screen.CHUNK_LIST).write_text(

@@ -217,6 +217,7 @@ class MinutesView(QWidget):
             [
                 (tr("Write again"), self._compose_again),
                 (tr("Ask your AI assistant"), self.ask_assistant.emit),
+                (tr("Version history…"), self._history),
                 (tr("Open file"), lambda: system.open_text(self.file, False)),
             ]
         )
@@ -472,6 +473,9 @@ class MinutesView(QWidget):
                 if saved != self._edit_base:
                     raise ValueError(tr("The minutes changed in another window. Your draft is still here."))
                 written = text.rstrip() + "\n"
+                if self._keep_before_edit and saved != written:
+                    minutes.save_previous(self.folder)
+                    self._keep_before_edit = False
                 minutes.write_draft(self.folder, written)
         except (OSError, ValueError) as error:
             log.warning("minutes edit not saved: %s", error)
@@ -495,6 +499,7 @@ class MinutesView(QWidget):
 
     def _start_edit(self, text: str | None = None) -> None:
         self._edit_base = text
+        self._keep_before_edit = True
         with QSignalBlocker(self.edit_item):
             self.edit_item.setPlainText(text or tr("# Minutes\n\n## Decisions\n\n## Tasks\n"))
         self.pages.setCurrentIndex(EDIT)
@@ -502,6 +507,41 @@ class MinutesView(QWidget):
         self._board.setVisible(text is not None)
         self._change.setText(tr("Done"))
         self.edit_item.setFocus()
+
+    def _history(self) -> None:
+        if not self.save():
+            return
+        try:
+            with transcript.locked(self.file):
+                current = self.file.read_text(encoding="utf-8")
+                versions = [
+                    path.read_text(encoding="utf-8") for path in minutes.history_paths(self.folder) if path.is_file()
+                ]
+            if not versions:
+                self._report(tr("No previous versions yet"))
+                return
+            dialog = QDialog(self)
+            dialog.setWindowTitle(tr("Version history…"))
+            dialog.resize(660, 500)
+            layout = QVBoxLayout(dialog)
+            choice = QComboBox()
+            choice.addItems([tr("Previous version {n}", n=i + 1) for i in range(len(versions))])
+            preview = QPlainTextEdit(versions[0])
+            preview.setReadOnly(True)
+            choice.currentIndexChanged.connect(lambda i: preview.setPlainText(versions[i]))
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+            buttons.addButton(tr("Restore this version"), QDialogButtonBox.ButtonRole.AcceptRole)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            for widget in (choice, preview, buttons):
+                layout.addWidget(widget)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self._start_edit(current)
+                self.edit_item.setPlainText(versions[choice.currentIndex()])
+                if self.save():
+                    self.display()
+        except (OSError, ValueError) as error:
+            self._report(failures.text(error))
 
     def _review_tasks(self) -> None:
         if not self.save():

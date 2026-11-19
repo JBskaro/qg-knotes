@@ -376,7 +376,18 @@ def _from_minutes(meeting: catalog.Meeting, data: dict) -> list[Task]:
     return [z for z in cards if z is not None]
 
 
-def _own(data: dict) -> Task:
+def _own(recordings: pathlib.Path, data: dict) -> Task:
+    date = datetime.date.fromisoformat(data["создана"])
+    source = Source(None, MANUAL, date)
+    name = data.get("встреча")
+    if isinstance(name, str) and pathlib.Path(name).name == name and name not in ("", ".", ".."):
+        source = Source(
+            recordings / name,
+            data.get("заголовок_встречи", name),
+            datetime.date.fromisoformat(data["дата_встречи"]),
+            data.get("секунда"),
+        )
+
     base_name = Task(
         OWN_PREFIX + str(data["ид"]),
         "",
@@ -385,7 +396,7 @@ def _own(data: dict) -> Task:
         TASK,
         data.get("проект", ""),
         data.get("состояние", TODO),
-        Source(None, MANUAL, datetime.date.fromisoformat(data["создана"])),
+        source,
     )
     return _with_data(base_name, data)
 
@@ -413,7 +424,7 @@ def tasks(
     ]
     for custom in _part(data, "свои", list):
         if isinstance(custom, dict) and project in (None, custom.get("проект", "")):
-            result.append(_skipped(lambda c=custom: _own(c), "own task"))
+            result.append(_skipped(lambda c=custom: _own(recordings, c), "own task"))
     layouts = projects.all_columns(recordings)
     return [_placed(z, layouts) for z in result if z is not None]
 
@@ -459,7 +470,7 @@ def refreshed(recordings: pathlib.Path, task: Task) -> Task | None:
             found = _own_task(data, task.key)
         except GoneError:
             return None
-        fresh = _skipped(lambda: _own(found), task.key)
+        fresh = _skipped(lambda: _own(recordings, found), task.key)
     else:
         folder = task.origin.folder or recordings
         try:
@@ -614,7 +625,9 @@ def kept(old: list[str], new: list[str]) -> set[str]:
 
 
 @transcript.locked_edit(FILE)
-def add(recordings: pathlib.Path, text: str, project: str = "", edit_item: Edit | None = None) -> Task:
+def add(
+    recordings: pathlib.Path, text: str, project: str = "", edit_item: Edit | None = None, source: Source | None = None
+) -> Task:
     """Adds an own task; the edit holds the other fields: who, due date, column, place."""
     fields = _to_data(dataclasses.replace(edit_item or Edit(), text=text))
     custom = {
@@ -627,11 +640,18 @@ def add(recordings: pathlib.Path, text: str, project: str = "", edit_item: Edit 
         "создана": datetime.date.today().isoformat(),
     }
     data = _data(recordings)
+    if source and source.folder and source.folder.parent == recordings:
+        custom.update(
+            встреча=source.folder.name,
+            заголовок_встречи=source.title,
+            дата_встречи=source.date.isoformat(),
+            секунда=source.second,
+        )
     data.setdefault("свои", []).append(custom)
     _change(data, OWN_PREFIX + custom["ид"], fields)
     _create_labels(data, fields.get("метки", []))
     _write(recordings, data)
-    return _placed(_own(custom), projects.all_columns(recordings))
+    return _placed(_own(recordings, custom), projects.all_columns(recordings))
 
 
 @transcript.locked_edit(FILE)

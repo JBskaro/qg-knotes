@@ -33,8 +33,7 @@ from knotes import settings
 from knotes import vocabulary as vocab
 from knotes.mcp import Tool, ToolError, Prompt, serve
 
-PREVIOUS = "протокол.прежний.md"  # minutes text before replacement: an AI edit can be rolled back
-COPIES = 5  # how many previous minutes texts to keep: протокол.прежний.md, .2.md, ...
+PREVIOUS, COPIES = minutes.PREVIOUS, minutes.COPIES
 KINDS = {"полный": lambda text: text, "письмо": minutes.for_email, "база_знаний": minutes.for_knowledge_base}
 INSTRUCTION = (
     "Встречи аналитика из программы QG Knotes («Узелок»): расшифровки и протоколы встреч с клиентами. "
@@ -210,34 +209,43 @@ def get_transcript(
     """Lines "[mm:ss] Name: text" up to PIECE characters; a time range and one participant's lines, so as not to read
     too much. A long meeting comes in pieces: the next one starts at "следующий_from_time"."""
     found = _meeting(meeting)
-    s, by = _seconds_of(from_time, "from_time", 0), _seconds_of(to_time, "to_time", float("inf"))
+    stamp, _, offset = (from_time or "").partition("#")
+    if offset and (not offset.isascii() or not offset.isdigit() or len(offset) > 10):
+        raise ToolError("from_time: неверная позиция строки")
+    skip = int(offset or 0)
+    s, by = _seconds_of(stamp, "from_time", 0), _seconds_of(to_time, "to_time", float("inf"))
     speaker = privacy.restored(found.folder, speaker) if speaker else speaker  # a hidden name comes as its label
     lines = [
         (second, f"[{transcript.time(second)}] {text}")
         for second, text in _lines(found)
         if s <= second <= by and (speaker is None or text.startswith(f"{speaker}: "))
     ]
+    lines = lines[skip:]
     piece, next_second = _piece(lines)
+    cursor = None
+    if next_second is not None:
+        cursor = transcript.time(next_second)
+        skipped = sum(int(second) == int(next_second) for second, _ in lines[: len(piece)])
+        if int(s) == int(next_second):
+            skipped += skip
+        if skipped:
+            cursor += f"#{skipped}"
     answer = {
         **_card(found),
         "строк": len(piece),
         "текст": "\n".join(piece),
-        "следующий_from_time": transcript.time(next_second) if next_second is not None else None,
+        "следующий_from_time": cursor,
     }
     return _hidden(found.folder, answer)
 
 
 def _piece(lines: list[tuple[float, str]]) -> tuple[list[str], float | None]:
-    """Lines up to PIECE characters and the second the next piece starts at, None if all of them fit. The cut falls
-    between whole seconds: the next piece, read from that second, repeats no line."""
+    """Lines up to PIECE characters and the second the next piece starts at, None if all of them fit."""
     size = 0
     for number, (second, line) in enumerate(lines):
         size += len(line) + 1
         if size > PIECE and number:
-            cut = number
-            while cut > 1 and int(lines[cut - 1][0]) == int(second):
-                cut -= 1
-            return [z for _, z in lines[:cut]], lines[cut][0]
+            return [z for _, z in lines[:number]], second
     return [z for _, z in lines], None
 
 
@@ -412,18 +420,6 @@ def get_costs(project: str | None = None, date_from: str | None = None, date_to:
 # --- edits ----------------------------------------------------------------------------------------------------
 
 
-def _save_previous(folder: pathlib.Path) -> None:
-    """Previous minutes texts in rotation, up to COPIES of them: two edits in a row do not lose the analyst's edit."""
-    file = folder / minutes.FILE
-    if not file.exists():
-        return
-    copies = [folder / PREVIOUS, *(folder / PREVIOUS.replace(".md", f".{n}.md") for n in range(2, COPIES + 1))]
-    for newer, older in zip(reversed(copies[:-1]), reversed(copies[1:]), strict=True):
-        if newer.exists():
-            newer.replace(older)
-    transcript.write_text(copies[0], file.read_text(encoding="utf-8"))
-
-
 def _kind(kind: str | None) -> str | None:
     if kind is not None and kind not in [v.name for v in kinds.kinds()]:
         raise ToolError(f"kind: один из {', '.join(v.name for v in kinds.kinds())}")
@@ -452,7 +448,7 @@ def compose_protocol(meeting: str, kind: str | None = None) -> dict:
     params = minutes.params(settings.load())
     old_view = _set_kind(found, kind)
     try:
-        file = minutes.compose(found.folder, params, keep=_save_previous)
+        file = minutes.compose(found.folder, params, keep=minutes.save_previous)
     except (providers.ProviderError, OSError) as error:  # FileNotFoundError: the meeting is not recognized
         _restore_kind(found, kind, old_view)
         raise ToolError(failures.text(error)) from error
@@ -486,7 +482,7 @@ def save_protocol(meeting: str, text: str, model: str = "") -> dict:
         raise ToolError("text: текст протокола")
     found = _meeting(meeting)
     with transcript.locked(found.folder / minutes.FILE):  # minutes the window writes meanwhile go to the copies
-        _save_previous(found.folder)
+        minutes.save_previous(found.folder)
         minutes.save(found.folder, privacy.restored(found.folder, text), model.strip() or ASSISTANT)
     return _hidden(found.folder, _card(found))
 
@@ -496,7 +492,7 @@ def update_protocol(meeting: str, text: str) -> dict:
         raise ToolError("text: новый текст протокола")
     found = _meeting(meeting)
     with transcript.locked(found.folder / minutes.FILE):
-        _save_previous(found.folder)
+        minutes.save_previous(found.folder)
         minutes.write_draft(found.folder, privacy.restored(found.folder, text).rstrip() + "\n")
     return _hidden(found.folder, _card(found))
 
@@ -575,8 +571,9 @@ TOOLS = {
         Tool(
             "get_transcript",
             "Расшифровка встречи строками «[мм:сс] Имя: текст», кусками до 30 тысяч знаков: если "
-            "«следующий_from_time» не null, следующий кусок - с этим from_time. from_time и to_time - мм:сс или "
-            "ч:мм:сс; speaker - реплики одного участника. Метки вида [ТЕЛЕФОН_1] - скрытые личные данные.",
+            "«следующий_from_time» не null, передайте его целиком, включая возможный суффикс #номер. "
+            "Обычное время — мм:сс или ч:мм:сс; speaker - реплики одного участника. "
+            "Метки вида [ТЕЛЕФОН_1] - скрытые личные данные.",
             MEETING
             | {
                 "from_time": {"type": "string"},

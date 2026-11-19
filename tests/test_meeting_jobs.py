@@ -75,13 +75,13 @@ class TestJobs(unittest.TestCase):
         self.addCleanup(file.unlink)
         taken = self.recordings / file.stem
         with (
-            mock.patch.object(meeting_jobs.recognition, "from_file", return_value=taken) as copied,
+            mock.patch.object(meeting_jobs.recognition, "import_track", return_value=taken) as copied,
             mock.patch.object(meeting_jobs, "recognize_folder", return_value=taken / transcript.TRANSCRIPT) as sent,
         ):
             self.jobs.take_file(file, self.recordings, self.params, False)
-            self.assertEqual(self.jobs.busy, {taken: Busy.TRANSCRIBING})
+            self.assertEqual(self.jobs.busy, {file: Busy.TRANSCRIBING})
             wait_for(lambda: self.results)
-        copied.assert_called_once_with(file, self.recordings)
+        copied.assert_called_once_with(file, taken)
         self.assertEqual(sent.call_args.args[:3], (taken, self.params, (False, False)))
         self.assertEqual(self.results, [(taken, taken / transcript.TRANSCRIPT)])
 

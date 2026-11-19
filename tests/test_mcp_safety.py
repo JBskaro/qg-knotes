@@ -111,6 +111,21 @@ class TestMeetingTools(unittest.TestCase):
             lines, [f"[{transcript.time(n * 10)}] Я: Фраза {n}. " + " ".join(["слово"] * 40) for n in range(600)]
         )
 
+    def test_pagination_with_many_lines_in_one_second(self):
+        self._long_meeting(1)
+        lines = [(5, f"Я: строка {i}") for i in range(12)]
+        with mock.patch.object(ai_tools, "_lines", return_value=lines), mock.patch.object(ai_tools, "PIECE", 45):
+            cursor, seen, output = None, set(), []
+            while True:
+                page = ai_tools.get_transcript(self.folder.name, from_time=cursor)
+                output.extend(page["текст"].splitlines())
+                cursor = page["следующий_from_time"]
+                if cursor is None:
+                    break
+                self.assertNotIn(cursor, seen)
+                seen.add(cursor)
+        self.assertEqual(output, ["[00:05] " + line for _, line in lines])
+
     def test_short_transcript_whole(self):
         self._long_meeting(3)
         piece = ai_tools.get_transcript(self.folder.name)

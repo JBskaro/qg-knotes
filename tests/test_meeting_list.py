@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from knotes import catalog, language, meeting_list, minutes, tasks, transcript
+from knotes import archive_search, catalog, language, meeting_list, minutes, tasks, transcript
 
 MINUTES = "# Итоги\n\n## Решения\n\n1. А.\n2. Б.\n\n## Задачи\n\n1. Сделать. Игорь.\n"
 
@@ -65,21 +65,24 @@ class TestMeetingList(unittest.TestCase):
 
     def test_search_reads_a_transcript_again_only_when_it_changed(self):
         meetings = catalog.list_(self.recordings)
-        with mock.patch.object(meeting_list.catalog, "find", wraps=catalog.find) as found:
-            self.assertEqual(meeting_list.find(meetings, "елку"), {self.first: 2})
-            self.assertEqual(meeting_list.find(meetings, "елку"), {self.first: 2})
-            self.assertEqual(found.call_count, 2)  # once per meeting
-            (self.second / transcript.TRANSCRIPT).write_text("И тут елку\n", encoding="utf-8")
-            self.assertEqual(meeting_list.find(meetings, "елку"), {self.first: 2, self.second: 1})
-            self.assertEqual(found.call_count, 3)
-            self.assertEqual(meeting_list.find(meetings, "бюджет"), {})
+        index = archive_search.ArchiveIndex()
+        index.sync(self.recordings, meetings)
+        with mock.patch.object(pathlib.Path, "read_text", side_effect=AssertionError("unchanged file read again")):
+            index.sync(self.recordings, meetings)
+            (hit,) = index.search(meetings, "елку", None, True)
+        self.assertEqual((hit.key, hit.second), (self.first.name, 1))
+        (self.second / transcript.TRANSCRIPT).write_text("И тут елку", encoding="utf-8")
+        index.sync(self.recordings, meetings)
+        self.assertEqual({h.key for h in index.search(meetings, "елку", None, True)}, {m.folder.name for m in meetings})
+        self.assertEqual(index.search(meetings, "бюджет", None, True), [])
 
     def test_unreadable_transcript_is_searched_by_title(self):
         (self.first / transcript.TRANSCRIPT).write_bytes("Обсудили ёлку".encode("cp1251"))
         catalog.set_(self.first, title="Ёлка во дворе")
         meetings = catalog.list_(self.recordings)
-        with self.assertLogs(meeting_list.log, "WARNING"):
-            self.assertEqual(meeting_list.find(meetings, "елка"), {self.first: 1})
+        index = archive_search.ArchiveIndex()
+        index.sync(self.recordings, meetings)
+        self.assertEqual([h.key for h in index.search(meetings, "елка", None, True)], [self.first.name])
 
     def test_search_pattern_as_in_the_list(self):
         pattern = meeting_list.search_pattern("елку")

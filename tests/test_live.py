@@ -117,6 +117,7 @@ ENGINE = textwrap.dedent("""
     from knotes import local_engine
 
     class Model:
+        backend = "CPU"
         said = 0
 
         def __init__(self, model, diarization):

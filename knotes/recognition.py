@@ -11,6 +11,8 @@ Command line: python -m knotes.recognition <meeting folder | recording file> [--
 import bisect
 import collections
 import dataclasses
+import hashlib
+import uuid
 import datetime
 import functools
 import logging
@@ -28,6 +30,7 @@ import numpy as np
 from knotes import catalog, local_engine, models, providers, transcript, system
 from knotes import settings
 from knotes import vocabulary as vocab
+from knotes import spending
 from knotes.language import tr_key, tr
 
 SAMPLE_RATE = 16000
@@ -237,6 +240,28 @@ class Chunks:
     answered: Callable[[dict], None] = lambda _answer: None
     save: Callable[[list[dict]], None] = lambda _parts: None
 
+    def received(self, parts: list[dict], model: str, whole: bool = False) -> list[dict]:
+        part = parts[-1]
+        part.update(
+            платеж=uuid.uuid4().hex,
+            дата=datetime.datetime.now().isoformat(),
+            модель=model,
+            сумма=providers.cost(part["ответ"]),
+            ожидает=True,
+        )
+        if whole:
+            part["целиком"] = True
+        self.save(parts)
+        self.settle(parts)
+        return parts
+
+    def settle(self, parts: list[dict]) -> None:
+        for part in parts:
+            if part.get("ожидает"):
+                self.answered(part)
+                del part["ожидает"]
+                self.save(parts)
+
 
 def recognize_track(
     path: pathlib.Path,
@@ -248,17 +273,19 @@ def recognize_track(
     """A track in one request; a long one or one not accepted whole goes in overlapping chunks. progress(done, total)
     is for this computer, in seconds of the track audio."""
     chunks = chunks or Chunks()
+    chunks.settle(chunks.done)
+    if chunks.done and chunks.done[0].get("целиком"):
+        return chunks.done
     if params_.provider.local_engine:  # the engine cuts the recording at pauses itself, there is no size limit
         result = [{"сдвиг": 0, "ответ": _local(path, params_, progress)}]
-        chunks.answered(result[0]["ответ"])
-        return result
+        return chunks.received(result, params_.final_model, whole=True)
     if duration <= WHOLE_UNTIL and not chunks.done:
         try:
             result = [{"сдвиг": 0, "ответ": _recognize(params_, to_mp3(path))}]
-            chunks.answered(result[0]["ответ"])
-            return result
         except providers.SizeError as error:
             log.info("%s was not accepted whole (%s), splitting into chunks", path.name, error)
+        else:
+            return chunks.received(result, params_.final_model, whole=True)
     return _in_chunks(path, duration, params_, chunks)
 
 
@@ -281,8 +308,7 @@ def _in_chunks(path: pathlib.Path, duration: float, params_: Params, chunks: Chu
                     minutes=CHUNK_S // 60,
                 )
             ) from error
-        chunks.answered(parts[-1]["ответ"])
-        chunks.save(parts)
+        chunks.received(parts, params_.final_model)
     return parts
 
 
@@ -515,10 +541,45 @@ def _collect(words: dict[str, list[dict]], levels: dict[str, tuple | None]) -> l
     return result
 
 
+def _fingerprint(file: pathlib.Path) -> str:
+    with file.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _convert_source(file: pathlib.Path, target: pathlib.Path) -> None:
+    _ffmpeg("-y", "-i", str(file), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "flac", str(target))
+
+
+def _same_import(folder: pathlib.Path, file: pathlib.Path, signature: str) -> bool:
+    previous = catalog.properties(folder).get("версия_источника")
+    if previous:
+        return previous == signature
+    track = folder / "общая.flac"
+    if not track.is_file():
+        return False
+
+    def audio_hash(path: pathlib.Path) -> bytes:
+        return _ffmpeg("-i", str(path), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "hash", "pipe:1")
+
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            converted = pathlib.Path(directory) / "source.flac"
+            _convert_source(file, converted)
+            same = audio_hash(track) == audio_hash(converted)
+    except subprocess.CalledProcessError:
+        return False
+    if same and _fingerprint(file) == signature:
+        catalog.set_(folder, версия_источника=signature)
+        return True
+    return False
+
+
 def folder_for_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Path:
     """The meeting folder for a ready file; a same-named file from another place gets its own numbered folder."""
     source = str(file.resolve())
-    written = datetime.datetime.fromtimestamp(file.stat().st_mtime).isoformat(timespec="seconds")
+    info = file.stat()
+    signature = _fingerprint(file)
+    written = datetime.datetime.fromtimestamp(info.st_mtime).isoformat(timespec="seconds")
     recordings.mkdir(parents=True, exist_ok=True)
     with transcript.locked(recordings / SOURCE):
         folder, number = recordings / file.stem, 2
@@ -527,25 +588,34 @@ def folder_for_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Pat
             try:
                 folder.mkdir()
             except FileExistsError:
-                if marker.is_file() and marker.read_text(encoding="utf-8") == source:
+                if (
+                    marker.is_file()
+                    and marker.read_text(encoding="utf-8") == source
+                    and _same_import(folder, file, signature)
+                ):
                     break
                 folder, number = recordings / f"{file.stem}_{number}", number + 1
             else:
                 transcript.write_text(marker, source)
+                catalog.set_(folder, started=written, версия_источника=signature)
                 break
-        catalog.set_(folder, started=written)
     return folder
 
 
 def from_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Path:
     """Puts a ready recording (video or audio) into <recordings>/<file name>/общая.flac; the source file stays as is."""
-    folder = folder_for_file(file, recordings)
+    return import_track(file, folder_for_file(file, recordings))
+
+
+def import_track(file: pathlib.Path, folder: pathlib.Path) -> pathlib.Path:
     shared_track = folder / "общая.flac"
     with transcript.locked(shared_track):
         if not shared_track.exists():
             working = folder / "общая.flac.tmp"
             try:
-                _ffmpeg("-y", "-i", str(file), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "flac", str(working))
+                _convert_source(file, working)
+                if _fingerprint(file) != catalog.properties(folder).get("версия_источника"):
+                    raise OSError(tr("The source recording changed during import. Import it again."))
                 transcript.replace(working, shared_track)
             finally:
                 working.unlink(missing_ok=True)
@@ -629,7 +699,7 @@ def _recognize_tracks(
     PARTS, so "Retry" after a break sends only the rest."""
     partial = {name: parts for name, parts in _cached(folder / PARTS).items() if name in need} if need else {}
     if need:
-        account.report(sum(len(partial.get(name, [])) for name in need))
+        account.report(sum(not part.get("ожидает") for parts in partial.values() for part in parts))
 
     def save(name: str, parts: list[dict]) -> None:
         partial[name] = parts
@@ -665,17 +735,20 @@ def process(
     durations, levels = {}, {}
     for name, p in paths.items():
         durations[name], levels[name] = _measure(p)
-    if again:
+    if again and not any(part.get("ожидает") for parts in _cached(folder / PARTS).values() for part in parts):
         (folder / PARTS).unlink(missing_ok=True)
-    answers = {} if again else _cached(folder / ANSWERS)
+        (folder / ANSWERS).unlink(missing_ok=True)
+    answers = _cached(folder / ANSWERS)
     need = {
         name: _for_track(name, levels, params_) for name in paths if name not in answers and levels[name] is not None
     }
     account = _Progress(params_.provider.local_engine, progress, {name: durations[name] for name in need})
 
-    def answered(answer: dict) -> None:
-        if payment:
-            payment(params_.final_model, providers.cost(answer))
+    def answered(part: dict) -> None:
+        if isinstance(payment, spending.SpeechPayment):
+            payment.record(part)
+        elif payment:
+            payment(part["модель"], part["сумма"])
         account.part()
 
     _recognize_tracks(folder, need, answers, account, answered)
@@ -687,6 +760,18 @@ def process(
         "стоимость": sum(providers.cost(ch["ответ"]) for parts in answers.values() for ch in parts),
         "провайдер": f"{params_.provider.title}, {params_.final_model}",
     }
+    execution = [
+        part["ответ"]["исполнение"]
+        for parts in answers.values()
+        for part in parts
+        if isinstance(part["ответ"].get("исполнение"), dict)
+    ]
+    if execution:
+        info["локальная_обработка"] = {
+            "модель": ", ".join(dict.fromkeys(item["модель"] for item in execution)),
+            "режим": " / ".join(dict.fromkeys(item["режим"] for item in execution)),
+            "секунд": sum(item["секунд"] for item in execution),
+        }
     return transcript.save(folder, result, info, _notes(list(paths), levels))
 
 

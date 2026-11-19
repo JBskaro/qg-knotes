@@ -164,6 +164,18 @@ class TestChunks(unittest.TestCase):
 
 
 class TestReadyRecording(unittest.TestCase):
+    def test_same_path_and_size_new_contents_get_own_meeting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            source = root / "видео.mp4"
+            source.write_bytes(b"old")
+            old = recognition.folder_for_file(source, root / "archive")
+            source.write_bytes(b"new")
+            new = recognition.folder_for_file(source, root / "archive")
+            self.assertNotEqual(old, new)
+            self.assertEqual(new, recognition.folder_for_file(source, root / "archive"))
+            self.assertTrue(old.is_dir())
+
     def test_import_does_not_reuse_a_recorded_meeting(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -217,6 +229,9 @@ class TestReadyRecording(unittest.TestCase):
                 str(video),
             )
             result = recognition.from_file(video, folder / "записи")
+            recognition.catalog.set_(result, версия_источника=None)
+            self.assertEqual(recognition.from_file(video, folder / "записи"), result)
+            self.assertTrue(recognition.catalog.properties(result).get("версия_источника"))
             audio = recognition.read_mono(result / "общая.flac")
             self.assertEqual(result.name, "встреча")
             self.assertAlmostEqual(len(audio) / SR, 2, delta=0.1)

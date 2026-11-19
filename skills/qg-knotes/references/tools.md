@@ -17,7 +17,7 @@ Common parameters:
 | `list_meetings` | `project`, `date_from`, `date_to`, `limit` |
 | `search_meetings` | **`query`**, `project`, `date_from`, `date_to`, `limit` (`встреч_найдено` counts all found) |
 | `get_protocol` | **`meeting`**, `view`: «полный» (draft with time stamps and «Для аналитика»), «письмо», «база_знаний» |
-| `get_transcript` | **`meeting`**, `from_time`, `to_time` (`mm:ss` or `h:mm:ss`), `speaker` (a name as in the transcript). Up to about 30 000 characters; `следующий_from_time` is the `from_time` of the next piece, null at the end |
+| `get_transcript` | **`meeting`**, `from_time`, `to_time` (`mm:ss` or `h:mm:ss`), `speaker` (a name as in the transcript). Up to about 30 000 characters; `следующий_from_time` is the next cursor (pass it unchanged, including a possible `#offset`), null at the end |
 | `get_meeting_notes` | **`meeting`** |
 | `get_project_notes` | **`project`** |
 | `list_open_items` | `project`, `date_from`, `date_to`, `include_done` (true also returns done and archived items) |

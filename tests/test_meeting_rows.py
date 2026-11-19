@@ -65,8 +65,6 @@ class TestMeetingRows(unittest.TestCase):
         self.assertEqual(meeting_rows.of_project(rows, ""), [rows[1]])
         in_project = meeting_rows.of_project(rows, "Склад")
         self.assertEqual(in_project, [rows[0], rows[2]])
-        found = meeting_rows.found_only(in_project, {rows[2].meeting.folder: 3})
-        self.assertEqual([(v.meeting.folder.name, v.found) for v in found], [("в", 3)])
 
 
 if __name__ == "__main__":

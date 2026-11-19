@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.2 - 2026-11-19
+
+- Search transcripts, minutes and notebooks in the background and jump to the matching point in a transcript.
+- Create a task from selected text and restore a previous version of the minutes.
+- Keep the transcription response across spending journal failures and count each receipt once.
+- Preserve screen recording fragments and unsaved project edits on errors. Detect changed source recordings and prevent project name collisions.
+- Apply privacy masking to custom minutes instructions, respect calendar cancellations and paginate transcript lines that share a timestamp.
+- Show the local recognition model, processing time and CPU or DirectML backend.
+
 ## 0.23.1 - 2026-11-15
 
 - Check for updates at startup and in the background. Show the sidebar button only when the release has a matching package with a checksum, and confirm before downloading.

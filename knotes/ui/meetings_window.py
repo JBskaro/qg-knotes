@@ -42,9 +42,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from knotes import disk_names
+from knotes import disk_names, projects as project_data
 from knotes import catalog, transcript, system, meeting_list, meeting_rows, project_rename
 from knotes.meeting_rows import MeetingItem, Progress
+from knotes.ui.archive_results import ArchiveResults, Search
 from knotes.ui import tour
 from knotes.ui import style
 from knotes.ui.meeting_row import MeetingRow
@@ -73,6 +74,7 @@ class MeetingsWindow(QWidget):
     notebook = Signal()
     summary = Signal()
     tasks = Signal(object)  # task board: project (None - all)
+    search_hit = Signal(object)
     find_notes = Signal(pathlib.Path, str)
     open_notes = Signal(pathlib.Path)  # a meeting on the "Notes" tab, from the project page feed
     changed = Signal()  # renamed, project set, deleted: reread the list
@@ -96,7 +98,14 @@ class MeetingsWindow(QWidget):
         self._heading = style.NAME  # window title with the open meeting
         self._kinds: list[MeetingItem] = []
         self._snapshot: tuple = ()  # what the list shows: query, project, rows
-        self._found: tuple = ()  # search matches: query, meetings searched, matches
+        self.results = ArchiveResults()
+        self.results.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.results.customContextMenuRequested.connect(
+            lambda point: self._menu(self.results.viewport().mapToGlobal(point))
+        )
+        self.results.opened.connect(self._open_hit)
+        self.results.status.connect(self._search_status)
         self.project: str | None = None  # selected on the left: None - all meetings, "" - no project
         self.recordings_folder: pathlib.Path | None = None
         self._known: list[str] = []
@@ -157,6 +166,7 @@ class MeetingsWindow(QWidget):
             tr("Hide the meeting list  Ctrl+2"),
             self.pending_only,
             self.list_,
+            self.results,
             self.empty,
             self._drop_area(),
         )
@@ -484,7 +494,11 @@ class MeetingsWindow(QWidget):
     def closeEvent(self, event: QCloseEvent) -> None:
         """The window hides by the clock: the page and the meeting close (the minutes edit is saved, sound stops). A
         meeting that keeps an edit it could not save keeps the window open too."""
-        if not self.go_back() or not self.close_meeting():
+        if (
+            (self.project_page is not None and not self.project_page.save())
+            or not self.go_back()
+            or not self.close_meeting()
+        ):
             event.ignore()
             return
         super().closeEvent(event)
@@ -500,7 +514,7 @@ class MeetingsWindow(QWidget):
         self._kinds = meeting_rows.items(meetings, busy_items, progress, price_per_second)
         self.projects_column.set_counts(meetings=len(self._kinds))
         self._show_projects()
-        self._show_items()
+        self._show_items(refresh_search=True)
 
     def show_progress(self, folder: pathlib.Path, progress: Progress) -> None:
         """Recognition progress of one meeting: only its row is rebuilt, the rest of the list stays as it is."""
@@ -553,6 +567,9 @@ class MeetingsWindow(QWidget):
         if self.page is not None and not self.go_back():
             self._show_projects()
             return
+        if self.project_page is not None and not self.project_page.save():
+            self._show_projects()
+            return
         self.project = project
         self._show_projects()
         self.projects_column.select(self.projects_column.section)
@@ -579,7 +596,8 @@ class MeetingsWindow(QWidget):
         """The search box serves the open section if it can search (the help), otherwise the meeting list."""
         if hasattr(self.page, "search_hint"):
             self.page.search(text)
-        else:
+        elif not self.results.wanted or self.results.wanted.query != text.strip():
+            self.results.request(None)
             self._search_delay.start()
 
     def _lend_search(self, page: QWidget) -> None:
@@ -604,7 +622,8 @@ class MeetingsWindow(QWidget):
     def _show_project_page(self, project: str | None) -> None:
         """With a project selected its page is on the right: meeting preparation, project info, meeting notes. A
         rebuild keeps an open meeting on top; a click on the project closes it first (_pick_project)."""
-        self._remove_project_page(save=True)
+        if not self._remove_project_page(save=True):
+            return
         if not project or self.recordings_folder is None:
             if self.meeting is None:
                 self.details.setCurrentIndex(0)
@@ -617,19 +636,22 @@ class MeetingsWindow(QWidget):
         if self.meeting is None:
             self.details.setCurrentWidget(page)
 
-    def _remove_project_page(self, save: bool) -> None:
-        page, self.project_page = self.project_page, None
+    def _remove_project_page(self, save: bool) -> bool:
+        page = self.project_page
         if page is None:
-            return
+            return True
         if save:
-            page.close()  # closing saves what was edited on it
+            if not page.close():
+                return False  # closing saves what was edited on it
         else:
             page.close_without_saving()
+        self.project_page = None
         self.details.removeWidget(page)
         page.deleteLater()
+        return True
 
     def refresh_notes_search(self) -> None:
-        self._found = ()
+        self.results.request(None)
         if not hasattr(self.page, "search_hint") and self.search.text().strip():
             self._search_delay.start()
 
@@ -708,9 +730,15 @@ class MeetingsWindow(QWidget):
         project is deleted: no notes, meetings and tasks without a project. An open project page is saved under the
         old name before the move and closed: otherwise on closing it would bring the old name back. False: the
         project kept its name, the user is told why."""
+        try:
+            project_data.require_free_name(self._projects(), old_value, new_value)
+        except ValueError as error:
+            self.notice.emit(tr("Rename project"), str(error))
+            return False
         page = self.project_page
         if page is not None and page.project == old_value:
-            page.save()
+            if not page.save():
+                return False
             self._remove_project_page(save=False)
         try:
             project_rename.rename(self.recordings_folder, [v.meeting for v in self._kinds], old_value, new_value)
@@ -740,23 +768,45 @@ class MeetingsWindow(QWidget):
             self._save_kind({p: v for p, v in self._project_looks.items() if p != project})
         self.changed.emit()
 
-    def _matches(self, meetings: list[catalog.Meeting], query: str) -> dict[pathlib.Path, int]:
-        """Search matches, looked for again only when the query or the meetings changed."""
-        if self._found[:2] != (query, meetings):
-            self._found = (query, meetings, meeting_list.find(meetings, query))
-        return self._found[2]
+    def _search_status(self, message: str) -> None:
+        self.results.setVisible(not message)
+        self.empty.setText(message)
+        self.empty.setVisible(bool(message))
 
-    def _show_items(self, always: bool = False) -> None:
+    def _open_hit(self, hit: object) -> None:
+        if hit.kind == "meeting":
+            path = self.results.wanted.root / hit.key
+            if path.is_dir():
+                self.open_meeting.emit(path)
+        elif hit.kind == "notes":
+            self.find_notes.emit(self.results.wanted.root / hit.key, self.results.wanted.query)
+        else:
+            self.search_hit.emit(hit)
+
+    def _show_items(self, always: bool = False, refresh_search: bool = False) -> None:
         query = (self._meetings_query if hasattr(self.page, "search_hint") else self.search.text()).strip()
         in_project = meeting_rows.of_project(self._kinds, self.project)
         pending = self.pending_only.isChecked()
         if pending:
             in_project = [v for v in in_project if v.needs_processing]
-        kinds = (
-            meeting_rows.found_only(in_project, self._matches([v.meeting for v in in_project], query))
-            if query
-            else in_project
-        )
+        if query:
+            self.list_.hide()
+            self.list_.clearSelection()
+            self._snapshot = ()
+            all_meetings = [v.meeting for v in self._kinds]
+            root = self.recordings_folder or (all_meetings[0].folder.parent if all_meetings else None)
+            if root:
+                self.results.request(
+                    Search(root, all_meetings, [v.meeting for v in in_project], query, self.project, not pending),
+                    refresh_search,
+                )
+            else:
+                self.results.request(None)
+                self._search_status(tr("Nothing found"))
+            return
+        self.results.request(None)
+        self.results.hide()
+        kinds = in_project
         snapshot = (query, self.project, tuple((v, v.meeting.folder.exists()) for v in kinds), pending)
         if snapshot == self._snapshot and not always:
             return
@@ -772,8 +822,6 @@ class MeetingsWindow(QWidget):
                     folder=self.recordings_folder,
                 )
             )
-        elif query:
-            self.empty.setText(tr("Nothing found"))
         elif pending:
             self.empty.setText(tr("No meetings need processing"))
         elif self.project is not None and self._kinds:
@@ -829,6 +877,10 @@ class MeetingsWindow(QWidget):
         return line
 
     def _selected_items(self) -> list[MeetingItem]:
+        if self.results.isVisible():
+            hits = [item.data(Qt.ItemDataRole.UserRole) for item in self.results.selectedItems()]
+            keys = {hit.key for hit in hits if hit.kind != "notebook"}
+            return [kind for kind in self._kinds if kind.meeting.folder.name in keys]
         return [
             e_.data(Qt.ItemDataRole.UserRole) for e_ in self.list_.selectedItems() if e_.data(Qt.ItemDataRole.UserRole)
         ]
@@ -850,15 +902,8 @@ class MeetingsWindow(QWidget):
         ):
             return
         kind = element.data(Qt.ItemDataRole.UserRole)
-        if kind and kind.meeting.folder.is_dir() and not self._open_note_match(kind):
+        if kind and kind.meeting.folder.is_dir():
             self.open_meeting.emit(kind.meeting.folder)
-
-    def _open_note_match(self, kind: MeetingItem) -> bool:
-        query = self.search.text().strip()
-        if not (query and kind.found and meeting_list.note_matches(kind.meeting.folder, query)):
-            return False
-        self.find_notes.emit(kind.meeting.folder, query)
-        return True
 
     def _row_menu(self, element: QListWidgetItem, point: QPoint) -> None:
         if not element.isSelected():
@@ -900,8 +945,11 @@ class MeetingsWindow(QWidget):
         menu.exec(point)
 
     def _open_item(self) -> None:
+        if self.results.isVisible():
+            self.results.open_item(self.results.currentItem())
+            return
         selected_items = self._selected_items()
-        if len(selected_items) == 1 and not self._open_note_match(selected_items[0]):
+        if len(selected_items) == 1:
             self._main_point(selected_items[0])
 
     def _rename(self) -> None:

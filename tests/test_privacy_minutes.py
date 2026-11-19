@@ -55,6 +55,15 @@ class TestPrivacyMinutes(unittest.TestCase):
         self.assertIn(f"по {PHONE}, письмо на {MAIL}.", saved)
         self.assertIn("[ЧЕЛОВЕК_1]", saved)  # a label the table does not know stays
 
+    def test_custom_instruction_and_transcript_share_redaction_labels(self):
+        params = minutes.Params(self.cloud, "к", self.cloud.model, f"Отправить на {MAIL}")
+        with mock.patch.object(providers, "model_answer", return_value=("Ответ [EMAIL_1]", 0.0)) as call:
+            minutes.compose(self.folder, params)
+        for message in call.call_args.args[2]["messages"]:
+            self.assertNotIn(MAIL, message["content"])
+            self.assertIn("[EMAIL_1]", message["content"])
+        self.assertIn(MAIL, (self.folder / minutes.FILE).read_text(encoding="utf-8"))
+
     def test_names_hidden_with_their_switch(self):
         params = minutes.Params(self.cloud, "к", self.cloud.model, "Инструкция", "Дмитрий", hide_names=True)
         sent = self._compose(params, "Участники - [ЧЕЛОВЕК_1], [ЧЕЛОВЕК_2]")

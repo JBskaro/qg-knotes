@@ -42,7 +42,6 @@ class MeetingItem:
     occupied: meeting_list.Busy | None = None
     progress: Progress | None = None
     price: float | None = None
-    found: int = 0
     result: str = ""  # of the minutes: "3 decisions · 5 tasks"
     has_minutes: bool = False
 
@@ -103,8 +102,3 @@ def with_progress(rows: list[MeetingItem], folder: pathlib.Path, progress: Progr
 def of_project(rows: list[MeetingItem], project: str | None) -> list[MeetingItem]:
     """Rows of the project selected on the left: None - all, "" - no project."""
     return [v for v in rows if project is None or v.meeting.project == project]
-
-
-def found_only(rows: list[MeetingItem], found: dict[pathlib.Path, int]) -> list[MeetingItem]:
-    """Search results: only the meetings with matches, each with how many it has."""
-    return [dataclasses.replace(v, found=found[v.meeting.folder]) for v in rows if v.meeting.folder in found]

@@ -83,6 +83,16 @@ class TestCalendar(unittest.TestCase):
         self.assertEqual(self._now(2026, 10, 23, 10, 20).title, "Показ доработки, загрузка остатков")
         self.assertIsNone(self._now(2026, 11, 4, 12, 0))  # an all-day event is not a meeting
 
+    def test_cancelled_event_and_occurrence(self):
+        until = _msk(2026, 10, 24, 0, 0)
+        cancelled = ICS.replace("UID:demo", "UID:demo\nSTATUS:CANCELLED").replace(
+            "RECURRENCE-ID;", "STATUS:CANCELLED\nRECURRENCE-ID;"
+        )
+        meetings = ics_calendar.parse(cancelled, until)
+        for day, hour in ((22, 10), (22, 15), (23, 10)):
+            self.assertIsNone(ics_calendar.current_value(meetings, _msk(2026, 10, day, hour, 5)))
+        self.assertIsNotNone(ics_calendar.current_value(meetings, _msk(2026, 10, 19, 10, 5)))
+
     def test_repeat_count_and_every_other_day(self):
         start = datetime.datetime(2026, 10, 1, 9, 0)
         repeats = ics_calendar.repeats(start, "FREQ=DAILY;INTERVAL=2;COUNT=3", datetime.datetime(2027, 1, 1), set())

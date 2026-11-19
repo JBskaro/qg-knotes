@@ -134,6 +134,7 @@ class App(QObject):
         self.window.summary.connect(self.open_summary)
         self.window.tasks.connect(self.open_tasks)
         self.window.open_notes.connect(self._open_notes)
+        self.window.search_hit.connect(self._open_search_hit)
         self.window.find_notes.connect(self._find_notes)
         self.window.notice.connect(self.notify)
         self.window.projects_changed.connect(
@@ -671,6 +672,21 @@ class App(QObject):
         """From the project page: the meeting on its "Notes" tab, also the one open already."""
         if (view := self.open_meeting(folder, NOTES)) is not None:
             view.show_tab(NOTES)
+
+    def _open_search_hit(self, hit: object) -> None:
+        if hit.kind == "notebook":
+            self.open_notebook()
+            if hasattr(self.window.page, "open_note"):
+                self.window.page.open_note(hit.key)
+            return
+        folder = self.settings.recordings / hit.key
+        if hit.kind == "transcript" and hit.second is not None:
+            self.open_place(folder, hit.second)
+        elif hit.kind == "minutes":
+            if view := self.open_meeting(folder, MINUTES):
+                view.show_tab(MINUTES)
+        else:
+            self.open_meeting(folder)
 
     def _find_notes(self, folder: pathlib.Path, query: str) -> None:
         if (view := self.open_meeting(folder, NOTES)) is not None:
