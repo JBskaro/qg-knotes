@@ -249,7 +249,7 @@ def _assemble_video(folder: pathlib.Path) -> str:
     except subprocess.CalledProcessError as e:
         log.warning("video %s was not assembled: %s", folder.name, (e.stderr or b"")[-2000:])
         return tr(screen.NOT_ASSEMBLED, reason=tr("the screen recording pieces could not be joined"))
-    except OSError as e:
+    except (ValueError, OSError) as e:
         log.warning("video %s was not assembled: %s", folder.name, e)
         return tr(screen.NOT_ASSEMBLED, reason=failures.text(e).rstrip("."))
     return ""

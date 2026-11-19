@@ -134,6 +134,24 @@ class TestProcessing(unittest.TestCase):
         self.assertEqual([[ch["сдвиг"] for ch in parts] for parts in cache.values()], [[0, 2, 4], [0, 2, 4]])
         self.assertFalse((self.folder / recognition.PARTS).exists())
 
+    def test_retry_after_journal_write_reuses_answer_and_receipt(self):
+        (self.folder / "собеседники.flac").unlink()
+        payment = spending.SpeechPayment(self.folder)
+        add = spending.add
+
+        def interrupted(root, expense):
+            add(root, expense)
+            raise OSError("interrupted after journal write")
+
+        with mock.patch.object(providers, "recognize", return_value=_answer((1, "Текст", "0"))) as provider:
+            with mock.patch.object(spending, "add", interrupted), self.assertRaises(OSError):
+                recognition.process(self.folder, self.params, payment=payment)
+            progress = []
+            recognition.process(self.folder, self.params, payment=payment, progress=lambda *p: progress.append(p))
+        provider.assert_called_once()
+        self.assertEqual(progress, [(0, 1), (1, 1)])
+        self.assertEqual([e.how_many for e in spending.list_(self.folder.parent, [])], [0.01])
+
     def test_each_paid_chunk_logged_at_once(self):
         """Spending is logged after each response: if the second track fails, the first is already paid for."""
         self.requests = []

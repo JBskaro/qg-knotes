@@ -73,13 +73,48 @@ class TestMeetingsList(unittest.TestCase):
         notes.write(self.recorded, notes.Notes(lines=(notes.NoteLine("Личная ёлка", private=True),)))
         self.window.search.setText("елка")
         self.window._show_items()
-        self._click(self.recorded)
+        self.window._search_delay.stop()
+        self._wait_for_search()
+        item = self.window.results.item(0)
+        QTest.mouseClick(
+            self.window.results.viewport(),
+            Qt.MouseButton.LeftButton,
+            pos=self.window.results.visualItemRect(item).center(),
+        )
         self.assertEqual(opened, [(self.recorded, "елка")])
         notes.write(self.recorded, notes.Notes(lines=(notes.NoteLine("Другой текст"),)))
         self.window.refresh_notes_search()
         self.window._show_items()
-        self.assertFalse(self.window._matches([catalog.meeting(self.recorded)], "елка"))
+        self._wait_for_search()
+        self.assertEqual(self.window.results.count(), 0)
         self.window._search_delay.stop()
+
+    def test_new_search_supersedes_pending_query_and_finds_minutes_and_notebook(self):
+        saved = notebook.save(self.recordings, notebook.Note(title="Решения в блокноте"), notebook.Note())
+        jobs = []
+        with mock.patch(
+            "knotes.ui.archive_results.run_in_background", side_effect=lambda p, work, done: jobs.append((work, done))
+        ):
+            for query in ("Начнем", "Решения"):
+                self.window.search.setText(query)
+                self.window._search_delay.stop()
+                self.window._show_items()
+            self.assertEqual(len(jobs), 1)
+            jobs[0][1](jobs[0][0]())
+            self.assertEqual(self.window.results.count(), 0)
+            jobs[1][1](jobs[1][0]())
+        results = self.window.results
+        hits = [results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(results.count())]
+        self.assertEqual({(h.kind, h.key) for h in hits}, {("notebook", saved.id), ("minutes", self.ready_one.name)})
+        self.assertTrue(all("Решения" in h.excerpt for h in hits))
+
+    def _wait_for_search(self):
+        for _ in range(200):
+            app.processEvents()
+            if not self.window.results.running:
+                return
+            QTest.qWait(10)
+        self.fail("search did not finish")
 
     def _meeting(self, name: str, minutes_text: str = "") -> pathlib.Path:
         folder = self.recordings / name
@@ -394,14 +429,18 @@ class TestMeetingsList(unittest.TestCase):
         self.assertEqual(self.window.search.text(), "")
         self.assertEqual(self.window.search.placeholderText(), page.search_hint)
         self.assertFalse(self.window._search_delay.isActive())  # the meeting query typed just before is applied
-        self.assertEqual(self.window._snapshot[0], "Начнем")
+        self._wait_for_search()
+        self.assertEqual(self.window.results.wanted.query, "Начнем")
         self.window.search.setText("ключ")
         self.assertTrue(page.segments.isHidden())  # the help shows found answers
         self.window._show_items(always=True)  # a list refresh meanwhile keeps the meeting query
-        self.assertEqual(self.window._snapshot[0], "Начнем")
+        self._wait_for_search()
+        self.assertEqual(self.window.results.wanted.query, "Начнем")
         self.window.go_back()
         self.assertEqual(self.window.search.text(), "Начнем")
         self.assertNotEqual(self.window.search.placeholderText(), page.search_hint)
+        self.assertEqual(self.window.results.wanted.query, "Начнем")
+        self.assertGreater(self.window.results.count(), 0)
 
     def test_page_changes_its_search_hint(self):
         """The board says what it searches when its own project button changes the project."""

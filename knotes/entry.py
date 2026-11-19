@@ -20,9 +20,9 @@ APP_ID = "JBskaro.QGKnotes"
 
 def payment(folder: pathlib.Path) -> Callable[[str, float], None]:
     """Where speech recognition writes the paid parts of the meeting: to the spending log."""
-    from knotes import catalog, spending  # noqa: PLC0415 - loaded by the processes that recognize speech
+    from knotes import spending  # noqa: PLC0415 - loaded by the processes that recognize speech
 
-    return lambda model, how_many: spending.write(folder, catalog.SPEECH, model, how_many)
+    return spending.SpeechPayment(folder)
 
 
 def main(arguments: list[str] | None = None) -> int:

@@ -39,6 +39,12 @@ class TestProjectRename(unittest.TestCase):
     def _task_projects(self) -> list[str]:
         return sorted(t.project for t in tasks.tasks(self.recordings, None))
 
+    def test_existing_destination_rejected_before_writes(self):
+        before = self._files()
+        with self.assertRaises(project_rename.NotRenamed):
+            project_rename.rename(self.recordings, self._meetings(), "Склад", "остатки")
+        self.assertEqual(before, self._files())
+
     def test_meetings_notes_and_tasks_follow_the_new_name(self):
         project_rename.rename(self.recordings, self._meetings(), "Склад", "Север")
         self.assertEqual([catalog.properties(f)["проект"] for f in self.folders], ["Север", "Север", "Остатки"])

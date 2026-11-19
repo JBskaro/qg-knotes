@@ -47,6 +47,11 @@ def _all_items(recordings: pathlib.Path) -> dict:
     return transcript.read_json(recordings / FILE, {})
 
 
+def require_free_name(names: list[str], old: str, new: str) -> None:
+    if new and any(name != old and name.casefold() == new.casefold() for name in names):
+        raise ValueError(tr("A project with this name already exists."))
+
+
 def _project(recordings: pathlib.Path, project: str) -> dict:
     data = _all_items(recordings).get(project)
     return data if isinstance(data, dict) else {}
@@ -102,6 +107,7 @@ def set_kind(recordings: pathlib.Path, project: str, kind_: str) -> None:
 def rename(recordings: pathlib.Path, old_value: str, new_value: str) -> None:
     """The details move to the new project name; an empty name means the project is deleted, and so are its details."""
     all_ = _all_items(recordings)
+    require_free_name(list(all_), old_value, new_value)
     if old_value not in all_:
         return
     data = all_.pop(old_value)

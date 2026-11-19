@@ -59,7 +59,7 @@ class MeetingRow(QWidget):
             project.setMinimumWidth(min(project.sizeHint().width() + 24, 100))  # a short project name stays whole
             top.addWidget(project, 0, Qt.AlignmentFlag.AlignVCenter)
         top.addStretch()
-        summary = catalog.summary(v) + (" · " + tr("found: {n}", n=kind.found) if kind.found else "")
+        summary = catalog.summary(v)
         row_label = style.Elided(summary)
         row_label.setObjectName("второй_текст")
         texts = QVBoxLayout()

@@ -253,6 +253,26 @@ class BoardItem(NamedTuple):
         return self.heading, self.item.number
 
 
+PREVIOUS = "протокол.прежний.md"
+COPIES = 5
+
+
+def history_paths(folder: pathlib.Path) -> list[pathlib.Path]:
+    return [folder / PREVIOUS, *(folder / PREVIOUS.replace(".md", f".{n}.md") for n in range(2, COPIES + 1))]
+
+
+def save_previous(folder: pathlib.Path) -> None:
+    """Previous minutes texts in rotation, up to COPIES of them: two edits in a row do not lose the analyst's edit."""
+    file = folder / FILE
+    if not file.exists():
+        return
+    copies = history_paths(folder)
+    for newer, older in zip(reversed(copies[:-1]), reversed(copies[1:]), strict=True):
+        if newer.exists():
+            newer.replace(older)
+    transcript.write_text(copies[0], file.read_text(encoding="utf-8"))
+
+
 def write_draft(folder: pathlib.Path, text: str, rewritten: bool = False) -> None:
     """Caller holds the meeting lock. Keep both sets of keys so a failed minutes write leaves the old cards intact."""
     file = folder / FILE
@@ -390,7 +410,7 @@ def compose(folder: pathlib.Path, params_: Params, keep: Callable[[pathlib.Path]
     body: dict = {
         "model": params_.model,
         "messages": [
-            {"role": "system", "content": params_.instruction},
+            {"role": "system", "content": hider.hide(params_.instruction) if hider else params_.instruction},
             {"role": "user", "content": hider.with_note(content) if hider else content},
         ],
     }
@@ -409,8 +429,7 @@ def _paid(
     file = folder / FILE
     with transcript.locked(file):
         try:
-            if keep:
-                keep(folder)
+            (keep or save_previous)(folder)
         except OSError:
             log.exception("the previous minutes of %s are not kept", folder.name)
         write_draft(folder, _unwrapped(text), rewritten=True)

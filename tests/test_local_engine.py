@@ -39,6 +39,7 @@ def _tokens(*triples: tuple) -> list[tuple[str, float, float]]:
 
 
 class FakeEngine:
+    backend = "CPU"
     """Engine without sherpa-onnx: chunks (start, length), per chunk the text and tokens from the chunk start,
     diarization segments."""
 

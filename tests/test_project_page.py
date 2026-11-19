@@ -72,6 +72,16 @@ class TestPrepareQuestions(unittest.TestCase):
         page.questions.undo()
         self.assertEqual(page.questions.toPlainText(), "Сроки\nкто вносит остатки")
 
+    def test_save_failure_keeps_draft_until_retry(self):
+        page = self._page()
+        page.questions.setPlainText("Черновик")
+        with mock.patch.object(projects, "set_for_meeting", side_effect=PermissionError):
+            self.assertFalse(page.close())
+        self.assertEqual(projects.for_meeting(self.recordings, "Склад"), "Сроки")
+        self.assertEqual(page.questions.toPlainText(), "Черновик")
+        page._retry_save.click()
+        self.assertEqual(projects.for_meeting(self.recordings, "Склад"), "Черновик")
+
     def test_failure_plain_and_prep_kept(self):
         page = self._page()
         page._prepare_button.click()

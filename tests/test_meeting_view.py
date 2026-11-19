@@ -12,7 +12,18 @@ from unittest import mock
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLabel, QMessageBox, QPushButton, QScrollBar
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollBar,
+)
 
 from knotes import catalog, minutes, notes, transcript, kinds, tasks
 from knotes.ui import export_dialog, style
@@ -462,7 +473,43 @@ class TestMeetingView(unittest.TestCase):
             mock.patch.object(transcript, "write_text", side_effect=lambda path, _text: events.append(path.name)),
         ):
             self.assertTrue(view.save())
-        self.assertEqual(events, ["lock", minutes.BOARD_REVIEW, minutes.FILE, "unlock"])
+        self.assertEqual(events, ["lock", minutes.PREVIOUS, minutes.BOARD_REVIEW, minutes.FILE, "unlock"])
+
+    def test_task_from_phrase_opens_at_original_minute(self):
+        self.window.project.setEditText("Проект")
+
+        def submit(dialog):
+            dialog.findChild(QPlainTextEdit).setPlainText("Проверить загрузку")
+            who, project = dialog.findChildren(QLineEdit)
+            self.assertEqual(project.text(), "Проект")
+            who.setText("Анна")
+            buttons = dialog.findChild(QDialogButtonBox)
+            next(
+                b for b in buttons.buttons() if buttons.buttonRole(b) == QDialogButtonBox.ButtonRole.AcceptRole
+            ).click()
+            return dialog.result()
+
+        with mock.patch.object(QDialog, "exec", submit):
+            self.window._create_task("Проверить", 5.5)
+        with mock.patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Rejected):
+            self.window._create_task("Отменить", 8)
+        (task,) = tasks.tasks(self.window.folder.parent, None)
+        self.assertEqual((task.text, task.project, task.who), ("Проверить загрузку", "Проект", "Анна"))
+        self.assertEqual((task.origin.folder, task.origin.second), (self.window.folder, 5))
+
+    def test_restore_minutes_keeps_replaced_version(self):
+        view = self.window.minutes
+        file = self.window.folder / minutes.FILE
+        file.write_text("# Старая версия", encoding="utf-8")
+        view.display()
+        view._toggle_edit()
+        view.edit_item.setPlainText("# Новая версия")
+        self.assertTrue(view.save())
+        with mock.patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+            view._history()
+        self.assertEqual(file.read_text(encoding="utf-8").strip(), "# Старая версия")
+        current_backup = (self.window.folder / minutes.PREVIOUS).read_text(encoding="utf-8")
+        self.assertEqual(current_backup.strip(), "# Новая версия")
 
     def test_search_waits_for_typing_and_treats_e_and_yo_alike(self):
         self.window.show_tab(TRANSCRIPT)

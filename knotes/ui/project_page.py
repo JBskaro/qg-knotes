@@ -126,6 +126,9 @@ class ProjectPage(QWidget):
         )
         self._prepare_button.clicked.connect(self._prepare)
         self._prepare_button.setMinimumWidth(self._prepare_button.sizeHint().width())  # "Preparing…" is shorter
+        self._retry_save = QPushButton(tr("Retry"))
+        self._retry_save.clicked.connect(self.save)
+        self._retry_save.hide()
         self._prepare_state = QLabel()
         self._prepare_state.setObjectName("тихий_текст")
         self._prepare_state.setWordWrap(True)
@@ -143,6 +146,7 @@ class ProjectPage(QWidget):
             self._heading(tr("Meeting prep")),
             self.questions,
             self._row(self._prepare_button, self._prepare_state),
+            self._retry_save,
             row_label,
             self.agenda,
             self._row(copy, self._copied),
@@ -206,20 +210,30 @@ class ProjectPage(QWidget):
         self._changed_all.add(field)
         self._save_later.start()
 
-    def save(self) -> None:
-        """Only what was edited here: questions discussed at a meeting left the file, the page does not return them."""
+    def save(self) -> bool:
         self._save_later.stop()
-        changed, self._changed_all = self._changed_all, set()
-        if "вопросы" in changed:
-            projects.set_for_meeting(self.recordings, self.project, self.questions.toPlainText())
-        if "сведения" in changed:
-            projects.set_(
-                self.recordings,
-                self.project,
-                projects.ProjectNotes(self.info.toPlainText(), self.for_model.isChecked()),
-            )
-        if changed:  # closing or copying without edits does not lay out the agenda again
-            self._show_agenda()
+        if not self._changed_all:
+            return True
+        try:
+            if "вопросы" in self._changed_all:
+                projects.set_for_meeting(self.recordings, self.project, self.questions.toPlainText())
+                self._changed_all.remove("вопросы")
+            if "сведения" in self._changed_all:
+                projects.set_(
+                    self.recordings,
+                    self.project,
+                    projects.ProjectNotes(self.info.toPlainText(), self.for_model.isChecked()),
+                )
+                self._changed_all.remove("сведения")
+        except (ValueError, OSError) as error:
+            self._retry_save.show()
+            self._say(tr("Not saved: {reason}", reason=failures.text(error)), error=True)
+            return False
+        if not self._retry_save.isHidden():
+            self._say("")
+        self._retry_save.hide()
+        self._show_agenda()
+        return True
 
     def editing(self) -> bool:
         """Someone is typing here or there is unsaved text: do not rebuild the page."""
@@ -260,7 +274,8 @@ class ProjectPage(QWidget):
         not ask again, also from a page rebuilt meanwhile."""
         if self._key in _preparing:
             return
-        self.save()
+        if not self.save():
+            return
         _preparing[self._key] = self
         self._busy(True)
         recordings, project = self._key
@@ -300,7 +315,9 @@ class ProjectPage(QWidget):
         self._say(" · ".join((result_text, catalog.money(suggestion.cost))) if suggestion.cost else result_text)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.save()
+        if not self.save():
+            event.ignore()
+            return
         if _preparing.get(self._key) is self:  # the answer goes to the saved prep or to the project's next page
             _preparing[self._key] = None
         super().closeEvent(event)

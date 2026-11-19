@@ -67,12 +67,29 @@ class Jobs(QObject):
         self, file: pathlib.Path, recordings: pathlib.Path, params: recognition.Params, delete_after: bool
     ) -> None:
         """A recording file becomes a meeting of the recordings folder and is transcribed."""
-        folder = recognition.folder_for_file(file, recordings)
+        if file in self.busy:
+            return
+        self.busy[file] = Busy.TRANSCRIBING
+        run_in_background(
+            self.pool,
+            lambda: recognition.folder_for_file(file, recordings),
+            lambda result: self._import_at(file, result, params, delete_after),
+        )
+
+    def _import_at(
+        self, file: pathlib.Path, folder: pathlib.Path | Exception, params: recognition.Params, delete_after: bool
+    ) -> None:
+        self.busy.pop(file, None)
+        if isinstance(folder, Exception):
+            self.transcribed.emit(file, folder)
+            return
+        if folder in self.busy:
+            return
         self.busy[folder] = Busy.TRANSCRIBING
         progress = self._progress_for(folder)
         run_in_background(
             self.pool,
-            lambda: recognize_folder(recognition.from_file(file, recordings), params, (False, delete_after), progress),
+            lambda: recognize_folder(recognition.import_track(file, folder), params, (False, delete_after), progress),
             lambda result: self._transcribed(folder, result),
         )
 

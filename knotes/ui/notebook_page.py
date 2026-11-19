@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from knotes import catalog, failures, notebook, transcript
 from knotes.language import tr, tr_key
-from knotes.ui import style
+from knotes.ui import style, board_writes
 from knotes.ui.notebook_editor import BOLD, DISC, ITALIC, MARKDOWN, NUMBER, STRIKE, NoteDocument, NoteEditor, link_url
 
 log = logging.getLogger(__name__)
@@ -140,6 +140,8 @@ class NotebookPage(QWidget):
         heading.addWidget(self.title, 1)
         heading.addWidget(self.more)
         self.body = NoteEditor()
+        self.body.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.body.customContextMenuRequested.connect(self._text_menu)
         self.body.setFrameShape(QFrame.Shape.NoFrame)
         self.body.setViewportMargins(6, 6, 6, 0)
         self.body.setPlaceholderText(tr("Write a note…"))
@@ -214,6 +216,18 @@ class NotebookPage(QWidget):
             menu.addSeparator()
             menu.addAction(tr("Delete note…"), lambda: self._delete(self._current))
         menu.exec(self.more.mapToGlobal(self.more.rect().bottomLeft()))
+
+    def _text_menu(self, point: QPoint) -> None:
+        menu = self.body.createStandardContextMenu()
+        text = self.body.textCursor().selectedText()
+        if text.strip():
+            menu.addSeparator()
+            menu.addAction(
+                tr("Create task…"),
+                lambda: board_writes.from_selection(self, self.recordings, text, self._current.project),
+            )
+        menu.exec(self.body.viewport().mapToGlobal(point))
+        menu.deleteLater()
 
     def _note_menu(self, point: QPoint) -> None:
         item = self.list_.itemAt(point)
@@ -431,6 +445,16 @@ class NotebookPage(QWidget):
         self._view(0)
         self.status.hide()
         self._show_list()
+
+    def open_note(self, key: str) -> None:
+        if not self.save():
+            return
+        note = next((item for item in self._items if item.id == key), None)
+        if note:
+            self._set_filter(None, note.archived)
+            self.archive.setChecked(note.archived)
+            self._show_project_filter()
+            self._open(note)
 
     def new_note(self) -> None:
         if self.save():

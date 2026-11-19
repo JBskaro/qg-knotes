@@ -44,6 +44,8 @@ from knotes.ui.page_motion import fade_in
 from knotes.ui.transcript_scroll import TranscriptScroll
 from knotes.ui.video_view import VideoView
 from knotes.player import Player
+from knotes import tasks
+from knotes.ui import board_writes
 from knotes.language import tr
 
 log = logging.getLogger(__name__)
@@ -96,6 +98,7 @@ class PhraseRow(QLabel):
 
     play = Signal(object)  # the row itself
     fixed = Signal(int, str)
+    create_task = Signal(str, float)
     note = Signal(float)  # add a note to this phrase: its start
     TIME_WIDTH = 76
 
@@ -174,6 +177,8 @@ class PhraseRow(QLabel):
 
     def _menu(self, point: QPoint) -> None:
         menu = QMenu(self)
+        selected = self.selectedText() or self.phrase_text
+        menu.addAction(tr("Create task…"), lambda: self.create_task.emit(selected, self.start))
         menu.addAction(tr("Add a note here…"), lambda: self.note.emit(self.start))
         menu.addAction(tr("Edit text"), self._edit)
         menu.exec(self.mapToGlobal(point))
@@ -568,6 +573,15 @@ class MeetingView(QWidget):
         parts = [catalog.folder_date(self.folder).strftime("%d.%m.%Y, %H:%M")]
         if data["сведения"].get("длительность"):
             parts.append(catalog.duration(data["сведения"]["длительность"]))
+        if run := data["сведения"].get("локальная_обработка"):
+            parts.append(
+                tr(
+                    "{model} · {backend} · processing {seconds} s",
+                    model=run["модель"],
+                    backend=run["режим"],
+                    seconds=round(run["секунд"]),
+                )
+            )
         return " · ".join(parts)
 
     def _add_block(self, page: TranscriptPage, block: dict) -> None:
@@ -586,6 +600,7 @@ class MeetingView(QWidget):
             row = PhraseRow(number, start, text, self._audio_available)
             row.play.connect(self._play)
             row.fixed.connect(self._fix)
+            row.create_task.connect(self._create_task)
             row.note.connect(self._note_at)
             page.rows[number] = row
             if number == self._playing:
@@ -643,6 +658,13 @@ class MeetingView(QWidget):
         else:
             transcript.delete_label(self.folder, block["время"], block["метка"])
         self.refresh()
+
+    def _create_task(self, text: str, second: float) -> None:
+        source = tasks.Source(
+            self.folder, catalog.heading(self.folder), catalog.folder_date(self.folder).date(), int(second)
+        )
+        if board_writes.from_selection(self, self.folder.parent, text, self.project.currentText().strip(), source):
+            self.meeting_changed.emit()
 
     def _note_at(self, seconds: float) -> None:
         """A note to a phrase after the meeting: the time is the phrase start; it goes to the meeting notepad too."""

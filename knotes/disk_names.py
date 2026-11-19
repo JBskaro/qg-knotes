@@ -103,6 +103,7 @@ LEGACY_NAMES = {
     "variable": "переменная",
     "video_quality": "качество_видео",
     "vocabulary": "словарь",
+    "receipt": "платеж",
     "when": "когда",
     "who": "кто",
     "window_layout": "раскладка",

@@ -263,6 +263,11 @@ def parse(text: str, until: datetime.datetime) -> list[Event]:
     lines = _lines(text)
     zones = _zones(lines)
     raw_items = _events(lines)
+    cancelled = {
+        s["UID"][0]
+        for s in raw_items
+        if "UID" in s and "RECURRENCE-ID" not in s and s.get("STATUS", ("",))[0].upper() == "CANCELLED"
+    }
     moved_items = set()
     for s in (s for s in raw_items if "RECURRENCE-ID" in s):
         with contextlib.suppress(ValueError, OverflowError):
@@ -270,7 +275,8 @@ def parse(text: str, until: datetime.datetime) -> list[Event]:
     result = []
     for s in raw_items:
         try:
-            result += _event_repeats(s, zones, moved_items, until)
+            if s.get("UID", ("",))[0] not in cancelled:
+                result += _event_repeats(s, zones, moved_items, until)
         except (ValueError, KeyError, IndexError, OverflowError):  # one corrupted event leaves the calendar working
             log.warning("skipped a calendar event that cannot be parsed", exc_info=True)
     return result
@@ -282,7 +288,7 @@ def _event_repeats(
     moved_items: set,
     until: datetime.datetime,
 ) -> list[Event]:
-    if "DTSTART" not in s or "T" not in s["DTSTART"][0]:
+    if s.get("STATUS", ("",))[0].upper() == "CANCELLED" or "DTSTART" not in s or "T" not in s["DTSTART"][0]:
         return []
     start = _time(*s["DTSTART"], zones)
     end = _time(*s["DTEND"], zones) if "DTEND" in s else start + datetime.timedelta(hours=1)

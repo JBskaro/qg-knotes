@@ -47,8 +47,12 @@ def rename(recordings: pathlib.Path | None, meetings: list[catalog.Meeting], old
             (recordings / notebook.FILE, lambda: notebook.rename_project(recordings, old_value, new_value)),
         ]
     try:
+        names = [v.project for v in meetings]
+        if recordings is not None:
+            names += list(transcript.read_json(recordings / projects.FILE, {}))
+        projects.require_free_name(names, old_value, new_value)
         before = {path: _content(path) for path, _ in steps}  # nothing is written if one can't be read
-    except OSError as error:
+    except (ValueError, OSError) as error:
         raise _not_renamed(old_value, new_value, error, []) from error
     written: dict[pathlib.Path, bytes | None | object] = {}  # a file as this rename left it
     for path, step in steps:

@@ -1,8 +1,21 @@
 {
+ "Invalid screen recording manifest": "Повреждён список фрагментов записи экрана",
  "No project": "Без проекта",
  "Delete": "Удалить",
  "Use this when writing the minutes": "Учитывать эти сведения при составлении протокола",
  "Next": "Далее",
  "Back": "Назад",
- "Close tips": "Закрыть подсказки"
+ "Close tips": "Закрыть подсказки",
+ "A project with this name already exists.": "Проект с таким именем уже есть.",
+ "Version history…": "История версий…",
+ "Previous version {n}": "Предыдущая версия {n}",
+ "Restore this version": "Восстановить эту версию",
+ "No previous versions yet": "Предыдущих версий пока нет",
+ "{model} · {backend} · processing {seconds} s": "{model} · {backend} · обработка {seconds} с",
+ "Create task…": "Создать задачу…",
+ "Create task": "Создать задачу",
+ "Searching…": "Поиск…",
+ "Meeting": "Встреча",
+ "Minutes": "Протокол",
+ "The source recording changed during import. Import it again.": "Файл записи изменился во время импорта. Импортируйте его ещё раз."
 }

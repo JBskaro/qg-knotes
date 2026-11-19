@@ -27,6 +27,8 @@ class Expense:
     project: str = ""  # the meeting's current project, for a deleted one as of the expense
     title: str = ""  # the meeting's own title as of the expense: a deleted one cannot be asked anymore
 
+    receipt: str = ""
+
 
 def from_meetings(meetings: list[catalog.Meeting]) -> list[Expense]:
     """Expenses at the prices saved in the meetings, on the meeting day: this is the count while there is no log, and
@@ -44,6 +46,8 @@ def _to_line(expense: Expense) -> str:
         "when": expense.when.isoformat(timespec="seconds"),
         "how_many": round(expense.how_many, 6),
     }
+    if not expense.receipt:
+        del fields["receipt"]
     return json.dumps(disk_names.to_disk(fields), ensure_ascii=False)
 
 
@@ -61,6 +65,7 @@ def _from_line(line: str) -> Expense | None:
             amount,
             str(fields.get("проект", "")),
             str(fields.get("название", "")),
+            str(fields.get("платеж", "")),
         )
     except (ValueError, KeyError, TypeError, OverflowError):
         log.warning("skipped a broken line of the spending log")
@@ -95,8 +100,12 @@ def list_(recordings: pathlib.Path, meetings: list[catalog.Meeting]) -> list[Exp
     """Both journals contain distinct charges. The meeting's current project and title take precedence."""
     exists = {v.folder.name: v for v in meetings}
     result = []
+    seen = set()
     for name in (FILE, RESERVE):
         for expense in _rows(_content(recordings / name)):
+            if expense.receipt and expense.receipt in seen:
+                continue
+            seen.add(expense.receipt)
             if (meeting := exists.get(expense.meeting)) is not None:
                 expense = dataclasses.replace(expense, project=meeting.project, title=meeting.custom_title)
             result.append(expense)
@@ -118,6 +127,34 @@ def write(folder: pathlib.Path, kind: str, model: str, how_many: float, when: da
     )
 
 
+@dataclasses.dataclass
+class SpeechPayment:
+    folder: pathlib.Path
+
+    def __call__(self, model: str, amount: float) -> None:
+        write(self.folder, catalog.SPEECH, model, amount)
+
+    def record(self, part: dict) -> None:
+        properties = catalog.properties(self.folder)
+        expense = Expense(
+            datetime.datetime.fromisoformat(part["дата"]),
+            self.folder.name,
+            catalog.SPEECH,
+            part["модель"],
+            part["сумма"],
+            properties.get("проект", ""),
+            properties.get("название", ""),
+            part["платеж"],
+        )
+        add(self.folder.parent, expense)
+
+
+def _already_paid(contents: dict, receipt: str) -> bool:
+    return bool(receipt) and any(
+        row.receipt == receipt for value in contents.values() if isinstance(value, str) for row in _rows(value)
+    )
+
+
 def add(recordings: pathlib.Path, expense: Expense) -> None:
     """Log each charge once. A failure to write the main journal falls back to a separate file."""
     if not math.isfinite(expense.how_many) or expense.how_many <= 0:
@@ -125,6 +162,8 @@ def add(recordings: pathlib.Path, expense: Expense) -> None:
     primary, reserve = recordings / FILE, recordings / RESERVE
     with transcript.locked(reserve):
         content = _journal_contents(primary, reserve)
+        if _already_paid(content, expense.receipt):
+            return
         seed = ""
         if all(isinstance(value, str) and next(_rows(value), None) is None for value in content.values()):
             seed = "".join(_to_line(item) + "\n" for item in from_meetings(catalog.list_(recordings)))
