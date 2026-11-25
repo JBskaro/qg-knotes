@@ -32,7 +32,8 @@ else:
     import fcntl
 
 PHRASES, NAMES, MARKS, TRANSCRIPT = "фразы.json", "имена.json", "метки.json", "расшифровка.md"
-MANIFEST = "запись.json"  # chunks of an unfinished recording
+MANIFEST = "запись.json"
+ASSEMBLED = ".собранная-запись.json"
 TRACKS = ("микрофон", "собеседники", "общая")  # <name>.flac
 ANSWERS = "scribe.json"  # raw recognition answers
 SOURCE = "источник.txt"  # path of the ready-made file the audio was taken from
@@ -52,6 +53,10 @@ _held = threading.local()  # folders whose lock this thread holds: an edit insid
 class Busy(TimeoutError):
     """Another edit kept the folder locked too long: this edit is not made, the other one is not lost. The text is for
     the user."""
+
+
+class JobBusy(Busy):
+    """Another process owns the recognition job."""
 
 
 def time(seconds_list: float) -> str:
@@ -176,6 +181,25 @@ def locked(path: pathlib.Path) -> Iterator[None]:
     finally:
         held.discard(folder)
         _release(handle)
+
+
+@contextlib.contextmanager
+def exclusive_job(path: pathlib.Path) -> Iterator[None]:
+    """A non-blocking OS lock separate from the meeting editor lock."""
+    handle = os.open(path, os.O_RDWR | os.O_CREAT)
+    try:
+        try:
+            _try_lock(handle)
+        except OSError as error:
+            if error.errno not in _BUSY:
+                raise
+            raise JobBusy(tr("This recording is already being transcribed.")) from None
+        try:
+            yield
+        finally:
+            _unlock(handle)
+    finally:
+        os.close(handle)
 
 
 def _lock(lock: pathlib.Path) -> int | None:
@@ -354,11 +378,15 @@ def blocks(folder: pathlib.Path, notes: list[tuple[int, str]] | None = None) -> 
 
 def to_markdown(title: str, lines: list[tuple[float, str]], info: dict, notes: list[str]) -> str:
     """Transcript in Markdown; lines are (second, "who: text" or a mark) in time order."""
+    costs = info.get("стоимость_по_валютам", {"USD": info["стоимость"]})
+    units = {"USD": "$", "RUB": "₽"}
+    price = " + ".join(f"{amount:.3f} {units.get(unit, unit)}" for unit, amount in costs.items())
+    if info.get("стоимость_не_сообщена"):
+        price = f"{price} (часть расходов не указана)" if price else "не указана площадкой"
     result = [
         f"# Встреча {title}",
         "",
-        f"Длительность {time(info['длительность'])}. Распознано: {info['провайдер']}, "
-        f"стоимость {info['стоимость']:.3f} $.",
+        f"Длительность {time(info['длительность'])}. Распознано: {info['провайдер']}, стоимость {price}.",
         "",
     ]
     result += [*notes, *([""] if notes else [])]

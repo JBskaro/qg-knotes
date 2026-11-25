@@ -21,7 +21,7 @@ import winreg
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QLockFile
 from PySide6.QtWidgets import QApplication
 
-from knotes import VERSION, instance
+from knotes import RUNTIME, VERSION, instance
 from knotes.ui import style
 
 ROOT = pathlib.Path(__file__).parent
@@ -111,7 +111,7 @@ def ico_icon(path: pathlib.Path) -> None:
 
 def lighten(folder: pathlib.Path) -> None:
     """Removes unused binaries and host ICU libraries that conflict with Windows ICU."""
-    internal = folder / "_internal"
+    internal = folder / RUNTIME
     qt = internal / "PySide6"
     (qt / "opengl32sw.dll").unlink(missing_ok=True)
     for translator in (qt / "translations").glob("*.qm"):
@@ -130,7 +130,7 @@ def lighten(folder: pathlib.Path) -> None:
 
 
 def match_qt_crt(folder: pathlib.Path) -> None:
-    internal = folder / "_internal"
+    internal = folder / RUNTIME
     qt = internal / "PySide6"
     for name in CRT_FROM_QT:
         source = qt / name
@@ -139,9 +139,9 @@ def match_qt_crt(folder: pathlib.Path) -> None:
 
 
 def licenses(folder: pathlib.Path) -> None:
-    """Puts the license texts into _internal\\licenses, which an update replaces with the program: the program's own
+    """Puts the license texts into the bundled runtime, which an update replaces with the program: the program's own
     GPL-3.0, the third-party notices, LGPL-3.0 for Qt, sherpa-onnx, ONNX Runtime and DirectML."""
-    where_to = folder / "_internal" / "licenses"
+    where_to = folder / RUNTIME / "licenses"
     where_to.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / "LICENSE", where_to / "LICENSE.txt")
     shutil.copyfile(ROOT / "THIRD_PARTY_NOTICES.md", where_to / "THIRD_PARTY_NOTICES.md")
@@ -295,6 +295,8 @@ def main() -> int:
         "--clean",
         "--windowed",
         "--onedir",
+        "--contents-directory",
+        RUNTIME,
         "--name",
         NAME,
         "--icon",

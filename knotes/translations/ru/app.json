@@ -118,7 +118,6 @@
  "Check sound and recognition": "Проверить звук и распознавание",
  "Paste it to your AI assistant: the minutes will appear in the meeting by themselves.": "Вставьте ее помощнику ИИ: протокол появится во встрече сам.",
  "Request copied": "Просьба скопирована",
- "Write the minutes of the meeting \"{meeting}\" from QG Knotes (folder {folder}): get the task with the get_protocol_task tool and save the minutes with the save_protocol tool.": "Составь протокол встречи «{meeting}» из QG Knotes (папка {folder}): возьми задание инструментом get_protocol_task и сохрани протокол инструментом save_protocol.",
  "GitHub did not answer about a new version, code {code}. Try again later.": "GitHub не ответил о новой версии, код {code}. Повторите позже.",
  "GitHub sent an unclear answer about a new version": "GitHub прислал непонятный ответ о новой версии",
  "The update archive is broken: it has paths outside the program folder": "Архив обновления испорчен: в нем пути вне папки программы",
@@ -145,5 +144,10 @@
  "Your own AI assistant (Claude Desktop and others) can write the minutes too, with its own model, next to this connection. Connect it in the \"App\" section.": "Свой помощник ИИ (Claude Desktop и другие) тоже может составлять протоколы, своей моделью, рядом с этим подключением. Подключить его - раздел «Программа».",
  "or <a href='#'>ask your own AI assistant</a> (Claude Desktop and others, over MCP)": "или <a href='#'>попросить своего помощника ИИ</a> (Claude Desktop и другие, через MCP)",
  "Meeting started": "Встреча началась",
- "“{title}” on the calendar. Record?": "«{title}» по календарю. Записать?"
+ "“{title}” on the calendar. Record?": "«{title}» по календарю. Записать?",
+ "Write the minutes for meeting {meeting} in QG Knotes. Get the task with get_protocol_task and save the minutes with save_protocol.": "Составь протокол встречи {meeting} в Узелке. Возьми задание через get_protocol_task и сохрани результат через save_protocol.",
+ "Cannot read the recording manifest. Audio fragments are in {folder}.": "Не удалось прочитать список фрагментов записи. Аудио сохранено в папке {folder}.",
+ "This recording is already being transcribed.": "Эта запись уже расшифровывается.",
+ "Your edited minutes were kept. The new draft is in {file}.": "Ваши правки сохранены. Новый черновик находится в файле {file}.",
+ "A different runtime already exists in {folder}.": "В папке {folder} уже находится другая сборка этой версии."
 }

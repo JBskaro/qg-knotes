@@ -84,6 +84,14 @@ class TestMeetingList(unittest.TestCase):
         index.sync(self.recordings, meetings)
         self.assertEqual([h.key for h in index.search(meetings, "елка", None, True)], [self.first.name])
 
+    def test_large_index_returns_the_original_line_and_time_on_a_block_boundary(self):
+        before = ("[00:01] Согласовали.\n" * 2200) + "[12:34] Редкая ёлка на складе.\n"
+        doc = archive_search.Document.indexed(("transcript", "meeting", "", ""), before)
+        self.assertIsInstance(doc.original, archive_search.TextBlocks)
+        hit = doc.match("Встреча", doc.body.index("елка"))
+        self.assertEqual(hit.second, 754)
+        self.assertIn("Редкая ёлка", hit.excerpt)
+
     def test_search_pattern_as_in_the_list(self):
         pattern = meeting_list.search_pattern("елку")
         self.assertEqual(pattern.split("Нарядили ЁЛКУ и елку"), ["Нарядили ", "ЁЛКУ", " и ", "елку", ""])

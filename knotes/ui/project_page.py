@@ -312,7 +312,11 @@ class ProjectPage(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(added)  # one undo step; the edit is saved as typing is
         result_text = tr("Added to the prep: {n}. Edit them as you need", n=len(added.strip().splitlines()))
-        self._say(" · ".join((result_text, catalog.money(suggestion.cost))) if suggestion.cost else result_text)
+        self._say(
+            " · ".join((result_text, catalog.money(suggestion.cost, suggestion.currency)))
+            if suggestion.cost
+            else result_text
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if not self.save():

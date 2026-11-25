@@ -203,7 +203,9 @@ def _step(start: datetime.datetime, rule: dict[str, str], number: int) -> list[d
     interval = int(rule.get("INTERVAL", "1")) * number
     frequency = rule.get("FREQ")
     if frequency == "DAILY":
-        return [start + datetime.timedelta(days=interval)]
+        day = start + datetime.timedelta(days=interval)
+        allowed = rule.get("BYDAY", "").split(",")
+        return [day] if not rule.get("BYDAY") or any(DAYS.get(d) == day.weekday() for d in allowed) else []
     if frequency == "WEEKLY":
         week = start - datetime.timedelta(days=start.weekday()) + datetime.timedelta(weeks=interval)
         days = [DAYS[d[-2:]] for d in rule.get("BYDAY", "").split(",") if d[-2:] in DAYS] or [start.weekday()]
@@ -235,11 +237,12 @@ def repeats(
     rule = _rule(rule_)
     if rule.keys() - RULE_PLAIN or (rule.get("FREQ") == "YEARLY" and rule.keys() & {"BYDAY", "BYMONTH"}):
         return [start] if start <= until and start not in exceptions else []
-    end = (
-        datetime.datetime.strptime(rule["UNTIL"][:8], "%Y%m%d") + datetime.timedelta(days=1)
-        if "UNTIL" in rule
-        else until
-    )
+    end = until
+    if limit := rule.get("UNTIL"):
+        last = _time(limit, {}, {})
+        if "T" not in limit:
+            last = datetime.datetime.combine(last.date(), datetime.time.max)
+        end = min(end, last)
     remaining = int(rule.get("COUNT", "0")) or REPEAT_LIMIT
     result = []
     for number in range(REPEAT_LIMIT):
@@ -250,7 +253,7 @@ def repeats(
         for moment in moments:
             if moment < start:
                 continue
-            if moment > min(end, until) or remaining <= 0:
+            if moment > end or remaining <= 0:
                 return result
             remaining -= 1
             if moment not in exceptions:

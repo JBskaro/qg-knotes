@@ -3,6 +3,7 @@
 installing it - the installer runs quietly, the portable copy swaps its program files after the old copy exits."""
 
 import ctypes
+import filecmp
 import dataclasses
 import json
 import logging
@@ -13,18 +14,18 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
+import tempfile
 import zipfile
 from collections.abc import Callable
 
-from knotes import VERSION, models, providers, system
+from knotes import RUNTIME, VERSION, models, providers, system, transcript
 from knotes import settings
 from knotes.language import tr
 
-REPOSITORY = "JBskaro/qg-knotes"  # the open repository once it exists: a private one answers 404 without a token
+REPOSITORY = "JBskaro/qg-knotes"
 LATEST = "https://api.github.com/repos/{repository}/releases/latest"
 EXE = "QG Knotes.exe"
-PROGRAM_FILES = (EXE, "_internal")  # what the onedir build consists of; other files next to it are the user's
+PREVIOUS_RUNTIME = ".qg-previous-runtime"
 UNINSTALLER = "unins000.exe"  # Inno Setup leaves it next to the installed program
 SETUP_ARGS = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LAUNCH=1"]  # /LAUNCH=1: start the new version
 SWAP_FLAG = "--update-swap"  # the new copy replaces the old one: <new folder> <old folder> <old pid>
@@ -168,6 +169,7 @@ def start_swap(new_folder: pathlib.Path, old_folder: pathlib.Path | None = None)
             str(new_folder),
             str(old_folder or program_folder()),
             str(os.getpid()),
+            pathlib.Path(getattr(sys, "_MEIPASS", "_internal")).name,
         ],
         creationflags=DETACHED,
         close_fds=True,
@@ -186,72 +188,30 @@ def wait_for_exit(pid: int, seconds: float = WAIT_EXIT_S) -> bool:
         ctypes.windll.kernel32.CloseHandle(handle)
 
 
-def _replace(path: pathlib.Path, backup: pathlib.Path) -> None:
-    """Moves the old file aside; an antivirus or Explorer may hold it for a moment."""
-    for attempt in range(20):
-        try:
-            path.rename(backup)
-            return
-        except FileNotFoundError:
-            return
-        except PermissionError:
-            if attempt == 19:
-                raise
-            time.sleep(0.5)
+def _same_runtime(first: pathlib.Path, second: pathlib.Path) -> bool:
+    for path in first.rglob("*"):
+        other = second / path.relative_to(first)
+        if path.is_file() and (not other.is_file() or not filecmp.cmp(path, other, shallow=False)):
+            return False
+    return {p.relative_to(first) for p in first.rglob("*")} == {p.relative_to(second) for p in second.rglob("*")}
 
 
-def _remove(path: pathlib.Path) -> None:
-    if path.is_dir():
-        shutil.rmtree(path, ignore_errors=True)
-    else:
-        path.unlink(missing_ok=True)
-
-
-class RestoreError(OSError):
-    """The update failed and the previous program files could not be put back."""
-
-
-def _restore(old_folder: pathlib.Path, moved: dict[str, pathlib.Path]) -> None:
-    """Puts the files moved aside back in place of a partly copied new version."""
-    left = []
-    for name, backup in moved.items():
-        try:
-            _remove(old_folder / name)
-            backup.rename(old_folder / name)
-        except OSError:
-            log.exception("update: %s did not come back", name)
-            left.append(backup.name)
-    if left:
-        raise RestoreError(
-            tr(
-                "The update was not installed and the previous version could not be put back. Its files are in "
-                "{folder}: rename {files} back (without .old) or download the program again.",
-                folder=old_folder,
-                files=", ".join(left),
-            )
-        )
-
-
-def swap(new_folder: pathlib.Path, old_folder: pathlib.Path) -> None:
-    """Replaces only the program files of the old copy; on failure the old ones are put back."""
-    if not all((new_folder / name).exists() for name in PROGRAM_FILES):
+def swap(new_folder: pathlib.Path, old_folder: pathlib.Path, previous: str = "_internal") -> None:
+    """The executable is the commit point. Both runtimes remain usable until the new GUI starts."""
+    source, target = new_folder / RUNTIME, old_folder / RUNTIME
+    if not source.is_dir() or not (new_folder / EXE).is_file():
         raise FileNotFoundError(tr("The new copy of the program lacks the needed files"))
-    moved: dict[str, pathlib.Path] = {}
-    try:
-        for name in PROGRAM_FILES:
-            backup = old_folder / f"{name}.old"
-            _remove(backup)
-            _replace(old_folder / name, backup)
-            if backup.exists():
-                moved[name] = backup
-        shutil.copy2(new_folder / EXE, old_folder / EXE)
-        shutil.copytree(new_folder / "_internal", old_folder / "_internal")
-    except OSError:
-        log.exception("update: the files did not install, restoring the previous ones")
-        _restore(old_folder, moved)
-        raise
-    for backup in moved.values():
-        _remove(backup)
+    with tempfile.TemporaryDirectory(prefix=".qg-update-", dir=old_folder) as temp:
+        stage = pathlib.Path(temp)
+        shutil.copy2(new_folder / EXE, stage / EXE)
+        if not target.exists():
+            shutil.copytree(source, stage / RUNTIME)
+            (stage / RUNTIME).rename(target)
+        elif not _same_runtime(source, target):
+            raise OSError(tr("A different runtime already exists in {folder}.", folder=target))
+        if previous != RUNTIME and re.fullmatch(r"_internal|_qg_runtime_[0-9]+(?:\.[0-9]+)*", previous):
+            transcript.write_text(old_folder / PREVIOUS_RUNTIME, previous)
+        transcript.replace(stage / EXE, old_folder / EXE)
 
 
 def _message(text: str, flags: int = MB_ERROR) -> int:
@@ -288,11 +248,7 @@ def finish_swap(arguments: list[str]) -> int:
         subprocess.Popen([str(old_folder / EXE)], creationflags=DETACHED, close_fds=True)
         return 1
     try:
-        swap(new_folder, old_folder)
-    except RestoreError as error:
-        log.exception("the update did not install, the previous version did not come back")
-        _message(str(error))
-        return 1
+        swap(new_folder, old_folder, arguments[3] if len(arguments) > 3 else "_internal")
     except OSError:
         log.exception("the update did not install")
         _message(
@@ -308,6 +264,18 @@ def finish_swap(arguments: list[str]) -> int:
 
 def cleanup() -> None:
     """The downloaded files and the unpacked copy are not needed once the new version runs."""
+    program = program_folder()
+    marker = program / PREVIOUS_RUNTIME
+    if pathlib.Path(getattr(sys, "_MEIPASS", "")) == program / RUNTIME and marker.is_file():
+        try:
+            old = marker.read_text(encoding="utf-8")
+            if old != RUNTIME and re.fullmatch(r"_internal|_qg_runtime_[0-9]+(?:\.[0-9]+)*", old):
+                runtime = program / old
+                if runtime.is_dir() and not runtime.is_junction() and not runtime.is_symlink():
+                    shutil.rmtree(runtime)
+            marker.unlink()
+        except OSError as error:
+            log.warning("previous runtime cleanup: %s", error)
     folder = updates_folder()
     if folder.exists() and folder not in program_folder().parents:
         shutil.rmtree(folder, ignore_errors=True)

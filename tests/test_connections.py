@@ -2,6 +2,7 @@
 """Connections: each function has a preset, address, API key and model; the address goes up to /v1, the endpoint is
 appended automatically; the API key is stored by address and shared for one address; old settings and keys are read."""
 
+import json
 import unittest
 from unittest import mock
 
@@ -12,11 +13,50 @@ from knotes import settings
 
 
 class TestPresets(unittest.TestCase):
+    def test_routerai_catalog_follows_the_selected_task(self):
+        catalog = [
+            {"id": "speech", "architecture": {"input_modalities": ["audio"], "output_modalities": ["transcription"]}},
+            {"id": "chat", "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}},
+            {"id": "vision", "architecture": {"input_modalities": ["image"], "output_modalities": ["text"]}},
+        ]
+        with mock.patch.object(providers, "_curl", return_value=(200, json.dumps({"data": catalog}))):
+            for function, expected in zip(providers.FUNCTIONS, ("speech", "chat"), strict=True):
+                self.assertEqual(providers.models(providers.find("routerai", function), ""), [(expected, expected)])
+
+    def test_new_transcription_presets_send_multipart_and_preserve_cost(self):
+        for preset in ("routerai", "groq"):
+            provider = providers.find(preset, "распознавание")
+            usage = {"cost": 12.75} if preset == "routerai" else {"seconds": 2}
+            response = {"words": [{"word": "test", "start": 0, "end": 1}], "usage": usage}
+            with mock.patch.object(providers, "_curl", return_value=(200, json.dumps(response))) as send:
+                answer = providers.recognize(provider, "test", providers.Request(b"audio", "ru"))
+            _, args, address = send.call_args.args
+            self.assertEqual(address, provider.address + "/audio/transcriptions")
+            self.assertIn("model=" + provider.model, args)
+            self.assertIn("timestamp_granularities[]=word", args)
+            self.assertEqual(providers.cost(answer), usage.get("cost", 0))
+            if preset == "routerai":
+                self.assertEqual(answer["usage"]["currency"], "RUB")
+
+    def test_direct_chat_presets_accept_custom_ids_and_token_only_usage(self):
+        answer = {"choices": [{"message": {"content": "OK"}}], "usage": {"total_tokens": 12}}
+        for preset, address in (("deepseek", "https://api.deepseek.com"), ("groq", "https://api.groq.com/openai/v1")):
+            with self.subTest(preset=preset):
+                provider = providers.find(preset, "протоколы")
+                body = {"model": "custom-id", "messages": [{"role": "user", "content": "test"}]}
+                with mock.patch.object(providers, "_send_json", return_value=(200, json.dumps(answer))) as send:
+                    self.assertEqual(providers.model_answer(provider, "test", body), ("OK", providers.Charge(0)))
+                send.assert_called_once_with("test", body, address + "/chat/completions")
+
     def test_presets_of_both_functions(self):
         self.assertEqual(
-            [z.id for z in providers.list_("распознавание")], ["openrouter", "локально", "nexara", "openai", "свой"]
+            [z.id for z in providers.list_("распознавание")],
+            ["openrouter", "локально", "nexara", "openai", "routerai", "groq", "свой"],
         )
-        self.assertEqual([z.id for z in providers.list_("протоколы")], ["openrouter", "openai", "свой", "lmstudio"])
+        self.assertEqual(
+            [z.id for z in providers.list_("протоколы")],
+            ["openrouter", "openai", "routerai", "groq", "deepseek", "свой", "lmstudio"],
+        )
         self.assertIn("Ollama", providers.find("свой", "протоколы").title)
         self.assertEqual(providers.find("openrouter").address, "https://openrouter.ai/api/v1")
 

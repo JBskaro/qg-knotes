@@ -14,7 +14,7 @@ import shiboken6
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QResizeEvent, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton, QWidget
 
 from knotes import catalog, projects, minutes, notebook, notes, transcript, kinds, meeting_rows, tasks
 from knotes.meeting_list import Busy
@@ -57,6 +57,8 @@ class TestMeetingsList(unittest.TestCase):
         self.window.update_requested.connect(lambda: clicks.append(True))
         self.window.show_update("99.0.0")
         self.assertTrue(self.window.update_button.isVisible())
+        self.assertFalse(self.window.update_button.icon().isNull())
+        self.assertEqual(self.window.update_button.text(), "")
         self.assertEqual(self.window.update_button.toolTip(), "Доступно обновление")
         self.assertIs(self.window.update_button.parentWidget(), self.window.projects_column)
         self.assertLess(
@@ -294,6 +296,28 @@ class TestMeetingsList(unittest.TestCase):
         page._set_project("Склад")
         self.assertEqual(page._current.id, first.id)
         self.assertEqual(page.list_.currentItem().text(), first.title)
+
+    def test_rename_preserves_note_and_other_draft(self):
+        note = notebook.save(
+            self.recordings, notebook.Note(title="План", text="Текст", project="Склад"), notebook.Note()
+        )
+        other = notebook.save(self.recordings, notebook.Note(title="Черновик", pinned=True), notebook.Note())
+        page = NotebookPage(self.recordings, ["Склад"])
+        self.addCleanup(page.close)
+        page.body.setPlainText("Новая строка")
+        with mock.patch.object(QInputDialog, "getText", return_value=("Итоги", True)):
+            page._rename(note)
+        self.assertEqual(page._current.id, other.id)
+        self.assertEqual(page.body.toPlainText(), "Новая строка")
+        self.assertTrue(page.save())
+        saved = next(item for item in notebook.list_(self.recordings) if item.id == note.id)
+        self.assertEqual(dataclasses.replace(saved, updated=note.updated, title=note.title), note)
+        self.assertEqual(saved.title, "Итоги")
+        page._open(saved)
+        for name, accepted in (("Отмена", False), ("  ", True)):
+            with mock.patch.object(QInputDialog, "getText", return_value=(name, accepted)):
+                page._rename(saved)
+            self.assertEqual(page.title.text(), "Итоги")
 
     def test_notebook_delete_targets_the_clicked_note_and_keeps_other_edits(self):
         first = notebook.save(self.recordings, notebook.Note(title="Первая"), notebook.Note())

@@ -7,7 +7,6 @@ typed so far and the open questions of past meetings) and suggests questions by 
 short checklist, by the instruction in prep_prompt.md. Its lines are added to the prep under the analyst's text,
 without repeating what is already there or in the agenda; from the prep they go to the recording notepad as usual.
 
-The request cost is not in the spending log yet: the log takes only meeting expenses (spending.write).
 """
 
 import dataclasses
@@ -40,6 +39,7 @@ class Past:
 class Suggestion:
     lines: tuple[str, ...]  # for the prep: questions and the checklist, none of them in the agenda yet
     cost: float = 0.0
+    currency: str = "USD"
 
 
 def past(meetings: Sequence[catalog.Meeting], project_tasks: Iterable[tasks.Task]) -> Past:
@@ -103,7 +103,9 @@ def next_meeting(events: Iterable[ics_calendar.Event], project: str, titles: set
 def input_(recordings: pathlib.Path, project: str, past_: Past, upcoming: ics_calendar.Event | None = None) -> str:
     """What the model gets: the project, how many meetings it had, the next meeting, the answer language, the meeting
     kind with its sections, About the project, the prep and the open items of past meetings."""
-    info, prep_text = projects.notes(recordings, project).text, projects.for_meeting(recordings, project)
+    project_notes = projects.notes(recordings, project)
+    info = project_notes.text if project_notes.for_model else ""
+    prep_text = projects.for_meeting(recordings, project)
     language_ = answer_language(info, prep_text)
     lines = [f"Проект - {project}", f"Прошлых встреч по проекту - {past_.meetings}"]
     if upcoming:
@@ -141,7 +143,7 @@ def suggest(recordings: pathlib.Path, project: str, params_: minutes.Params) -> 
     meetings = [v for v in catalog.list_(recordings) if v.project == project]
     past_ = past(meetings, tasks.tasks(recordings, project))
     upcoming = next_meeting(calendar(), project, {v.custom_title for v in meetings if v.custom_title})
-    hider = minutes.hider_for(None, params_)
+    hider = minutes.hider_for(None, params_, [m.folder for m in meetings])
     content = input_(recordings, project, past_, upcoming)
     body: dict = {
         "model": params_.model,
@@ -158,17 +160,24 @@ def suggest(recordings: pathlib.Path, project: str, params_: minutes.Params) -> 
     info = projects.notes(recordings, project).text
     known = [p.text for p in agenda(projects.for_meeting(recordings, project), info, past_)]
     lines = new_lines(answer, known)
-    log.info("meeting prep by %s: %d new lines, cost %.5f $", params_.model, len(lines), cost)
-    return Suggestion(tuple(lines), cost)
+    log.info("meeting prep by %s: %d new lines, cost %.5f %s", params_.model, len(lines), cost.amount, cost.currency)
+    return Suggestion(tuple(lines), cost.amount, cost.currency)
 
 
-def _log_cost(recordings: pathlib.Path, project: str, model: str, cost: float) -> None:
+def _log_cost(recordings: pathlib.Path, project: str, model: str, cost: providers.Charge) -> None:
     """The prep is paid like the minutes; it has no meeting, so it goes to the log under the project."""
     try:
         spending.add(
             recordings,
             spending.Expense(
-                datetime.datetime.now(), "", catalog.MINUTES_KIND, model, cost, project, tr("Meeting prep")
+                datetime.datetime.now(),
+                "",
+                catalog.MINUTES_KIND,
+                model,
+                cost.amount,
+                project,
+                tr("Meeting prep"),
+                currency=cost.currency,
             ),
         )
     except OSError as error:  # the answer is paid and received: it is shown even if the log is not written

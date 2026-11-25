@@ -3,6 +3,7 @@
 and open questions), how the answer is added to the prep without repeats, failures; the page agenda from the past
 collected once is the same as the board agenda."""
 
+import dataclasses
 import datetime
 import json
 import pathlib
@@ -88,6 +89,18 @@ class TestPrep(unittest.TestCase):
         self.params = minutes.Params(providers.find("lmstudio", "протоколы"), "", "модель", "И")
         _, body = self._suggest(_answer("До встречи - позвонить."))
         self.assertIn("+7 913 555-12-34", body["messages"][1]["content"])
+
+    def test_prep_masks_project_speakers_and_excludes_private_context(self):
+        folder = self._meeting()
+        self.params = dataclasses.replace(self.params, hide_data=True, hide_names=True)
+        transcript.set_names(folder, {"Говорящий 1": "Анна Рожкова"})
+        projects.set_(self.recordings, "Склад", projects.ProjectNotes("Секретный комментарий", False))
+        projects.set_for_meeting(self.recordings, "Склад", "Уточнить у Анны Рожковой")
+        _, body = self._suggest(_answer())
+        content = body["messages"][1]["content"]
+        self.assertNotIn("Секретный комментарий", content)
+        self.assertNotIn("Рожковой", content)
+        self.assertIn("[ЧЕЛОВЕК_", content)
 
     def test_cost_goes_to_the_spending_log_under_the_project(self):
         self._suggest(_answer(cost=0.004))

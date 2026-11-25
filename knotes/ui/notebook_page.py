@@ -67,6 +67,9 @@ class NotebookPage(QWidget):
         self._timer.timeout.connect(self.save)
         self._build_list()
         self._build_editor()
+        QShortcut(QKeySequence("F2"), self, lambda: self._rename(self._current)).setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
         split = QSplitter()
         split.addWidget(self.list_panel)
         split.addWidget(self.editor_panel)
@@ -203,6 +206,7 @@ class NotebookPage(QWidget):
         reading = bool(self.stack.currentIndex())
         menu.addAction(tr("Edit notes") if reading else tr("Preview note"), lambda: self._view(0 if reading else 1))
         menu.addSeparator()
+        menu.addAction(tr("Rename"), lambda: self._rename(self._current))
         menu.addAction(tr("Unpin note") if self._current.pinned else tr("Pin note"), self._pin)
         projects = menu.addMenu(tr("Note project"))
         for project in ("", *self._projects):
@@ -235,8 +239,28 @@ class NotebookPage(QWidget):
             return
         note = item.data(ROLE)
         menu = QMenu(self.list_)
+        menu.addAction(tr("Rename"), lambda: self._rename(note))
         menu.addAction(tr("Delete note…"), lambda: self._delete(note))
         menu.exec(self.list_.viewport().mapToGlobal(point))
+
+    def _rename(self, note: notebook.Note) -> None:
+        active = note.id == self._current.id
+        title = self.title.text() if active else note.title
+        name, accepted = QInputDialog.getText(self, tr("Rename"), tr("Note title"), text=title)
+        name = name.strip()
+        if not accepted or not name or name == title.strip():
+            return
+        if active:
+            self.title.setText(name)
+            if self.save() and not self._matches(self._current):
+                self._open(self._first())
+            return
+        try:
+            notebook.save(self.recordings, dataclasses.replace(note, title=name), note)
+        except (OSError, ValueError) as error:
+            self._report(error)
+            return
+        self._refresh()
 
     def _pin(self) -> None:
         if self.save() and self._current.id:

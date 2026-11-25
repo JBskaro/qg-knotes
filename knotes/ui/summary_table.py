@@ -58,7 +58,7 @@ class MeetingsTable(QTableWidget):
         if folder is not None:  # a deleted meeting has nothing to open
             self.open_view.emit(folder)
 
-    def set_(self, lines: list[summary.SummaryRow]) -> None:
+    def set_(self, lines: list[summary.SummaryRow], currency: str = "USD") -> None:
         """Rows by meeting, newest on top unless the user sorted by another column; hovering shows what the money
         went on, which model and what share."""
         header = self.horizontalHeader()
@@ -74,12 +74,12 @@ class MeetingsTable(QTableWidget):
                 title,
                 Number(f"{line.date:%d.%m.%Y %H:%M}", line.date.timestamp()),
                 Number(clock(line.seconds) if line.seconds else "-", line.seconds),
-                Number(or_dash(speech), speech),
-                Number(or_dash(minutes), minutes),
-                Number(or_dash(result.cost), result.cost),
+                Number(or_dash(speech, currency), speech),
+                Number(or_dash(minutes, currency), minutes),
+                Number(or_dash(result.cost, currency), result.cost),
                 QTableWidgetItem(", ".join(name for _, name, _, _ in summary.models(result) if name)),
             ]
-            tooltip = style.plain_tooltip("\n".join(summary.arrangement(result)))
+            tooltip = style.plain_tooltip("\n".join(summary.arrangement(result, currency)))
             for column, cell in enumerate(cells):
                 cell.setToolTip(tooltip)
                 self.setItem(row, column, cell)

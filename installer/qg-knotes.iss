@@ -124,11 +124,26 @@ begin
   Result := (not WizardSilent()) or (ExpandConstant('{param:launch|0}') = '1');
 end;
 
+procedure RememberRuntimeForCleanup();
+var
+  HighVersion, LowVersion: Cardinal;
+  OldRuntime, ProgramDir: String;
+begin
+  ProgramDir := ExpandConstant('{app}\');
+  if not GetVersionNumbers(ProgramDir + '{#AppExe}', HighVersion, LowVersion) then
+    Exit;
+  OldRuntime := Format('_qg_runtime_%d.%d.%d', [HighVersion shr 16, HighVersion and $FFFF, LowVersion shr 16]);
+  if (OldRuntime <> '_qg_runtime_{#AppVersion}') and DirExists(ProgramDir + OldRuntime) then
+    SaveStringToFile(ProgramDir + '.qg-previous-runtime', OldRuntime, False);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   if not CloseApp(SetupMessage(msgSetupAppRunningError)) then
-    Result := SetupMessage(msgErrorCloseApplications);
+    Result := SetupMessage(msgErrorCloseApplications)
+  else
+    RememberRuntimeForCleanup();
 end;
 
 function InitializeUninstall(): Boolean;

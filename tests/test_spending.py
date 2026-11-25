@@ -30,6 +30,26 @@ class TestSpendingLog(unittest.TestCase):
         openrouter = providers.find("openrouter", "протоколы")
         self.params = minutes.Params(openrouter, "к", "claude", "Инструкция")
 
+    def test_fractional_charge_survives_journal_reload(self):
+        amount = 0.00000045
+        spending.write(self.folder, catalog.MINUTES_KIND, "small", providers.Charge(amount, "RUB"))
+        rows = spending.list_(self.recordings, [])
+        self.assertEqual([(r.currency, r.how_many) for r in rows if r.model == "small"], [("RUB", amount)])
+
+    def test_routerai_minutes_preserve_dollars_and_record_rubles_once(self):
+        service = providers.find("routerai", "протоколы")
+        params = minutes.Params(service, "test", service.model, "Instruction")
+        with mock.patch.object(providers, "_send_json", return_value=_model_response(12.75)) as send:
+            minutes.compose(self.folder, params)
+        self.assertEqual(send.call_args.args[-1], "https://routerai.ru/api/v1/chat/completions")
+        meetings = catalog.list_(self.recordings)
+        rows = spending.list_(self.recordings, meetings)
+        self.assertCountEqual([(r.currency, r.how_many) for r in rows], [("USD", 0.1), ("USD", 0.03), ("RUB", 12.75)])
+        self.assertCountEqual(
+            [(r.currency, r.how_many) for r in spending.from_meetings(meetings)], [("USD", 0.1), ("RUB", 12.75)]
+        )
+        self.assertEqual(catalog.properties(self.folder)["валюта_протокола"], "RUB")
+
     def tearDown(self):
         self._tmp.cleanup()
 
@@ -70,6 +90,13 @@ class TestSpendingLog(unittest.TestCase):
                 minutes.compose(self.folder, self.params)
         self.assertAlmostEqual(self._total(), 0.10 + 0.03 + 0.05 + 0.04)
         self.assertAlmostEqual(catalog.meeting(self.folder).minutes_cost, 0.04)  # the meeting keeps the last one
+
+    def test_read_only_archive_includes_unreconciled_receipts(self):
+        spending.write(self.folder, catalog.MINUTES_KIND, "model", 0.02)
+        (self.recordings / spending.FILE).rename(self.recordings / spending.PENDING)
+        with mock.patch.object(transcript, "locked", side_effect=PermissionError("read only")):
+            self.assertAlmostEqual(self._total(), 0.15)
+        self.assertAlmostEqual(self._total(), 0.15)
 
     def test_deleted_meeting_keeps_its_spending(self):
         spending.write(self.folder, catalog.MINUTES_KIND, "claude", 0.05, D(2026, 10, 24, 9, 0))

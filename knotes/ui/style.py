@@ -61,6 +61,7 @@ MICROPHONE, HEADPHONES, DOT = "", "", ""
 COLLAPSE, EXPAND, UP, DOWN = "", "", "", ""
 RIGHT = ""
 STAR, PAUSE, LATER_SPAN, STOP = "", "", "", ""
+SYNC = ""
 SEARCH, SETTINGS, HELP, MORE, REFRESH, EYE = "", "", "", "", "", ""
 FILTER_FILES, FOLDER, DOCUMENT, SEND, UPLOAD = "", "", "", "", ""
 PLUS, CLOSE, BOOK, VIDEO = "", "", "", ""
@@ -548,11 +549,12 @@ QListWidget#разделы::item, QListWidget#проекты::item {{ padding: 2
 QListWidget#разделы::item:hover, QListWidget#проекты::item:hover {{ background: {hover}; }}
 QListWidget#разделы::item:selected {{ background: {choice}; color: {choice_text}; }}
 QListWidget#проекты::item:selected {{ background: {frame_box}; }}
-QToolButton#значок, QToolButton#обновление {{ font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+QToolButton#значок {{ font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
     font-size: 15px; }}
 QToolButton#значок {{ border: none; border-radius: 4px; padding: 6px; min-width: 20px; }}
-QToolButton#обновление {{ background: {layer_}; border: 1px solid {frame_box}; border-radius: 8px; }}
-QToolButton#обновление:hover {{ background: {frame_box}; }}
+QToolButton#обновление {{ background: transparent; border: 1px solid transparent; border-radius: 6px; }}
+QToolButton#обновление:hover {{ background: {hover}; }}
+QToolButton#обновление:pressed {{ background: {choice}; }}
 QToolButton#обновление:focus {{ border-color: {a}; }}
 QToolButton#значок:hover {{ background: {hover}; }}
 QToolButton#значок:checked {{ background: {choice}; color: {choice_text}; }}

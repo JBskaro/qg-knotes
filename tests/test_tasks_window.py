@@ -408,6 +408,21 @@ class TestBoardFailures(BoardCase):
 
 
 class TestBoardSpeed(BoardCase):
+    def test_initial_board_can_be_shown_before_reading_meetings(self):
+        jobs = []
+        with mock.patch.object(
+            tasks_window, "run_in_background", side_effect=lambda _, read, done: jobs.append((read, done))
+        ):
+            page = TasksWindow(self.recordings, ([], {}), pool=tasks_window.QThreadPool.globalInstance())
+        self.addCleanup(page.close)
+        self.assertFalse(page.isEnabled())
+        self.assertFalse(page._loading.isHidden())
+        read, done = jobs.pop()
+        done(read())
+        self.assertTrue(page.isEnabled())
+        self.assertTrue(page._loading.isHidden())
+        self.assertGreater(page.columns[tasks.TODO].count(), 0)
+
     def test_cards_do_not_read_meetings_and_panel_redraws_one_card(self):
         catalog.set_(self.folder, title="")  # the default title, shown in the interface language
         self.window.display()

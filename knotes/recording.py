@@ -9,6 +9,7 @@ An interrupted recording (the app was closed, a reboot) stays with its manifest 
 import contextlib
 import dataclasses
 import datetime
+import json
 import logging
 import os
 import pathlib
@@ -30,6 +31,7 @@ from knotes import transcript
 from knotes.language import tr
 
 MANIFEST = transcript.MANIFEST
+ASSEMBLED = transcript.ASSEMBLED
 TICK_S = 1.0
 CHECK_TICKS = 2  # in ticks
 FLUSH_TICKS = 5  # in ticks
@@ -155,12 +157,18 @@ def _close_all(tracks: list[Track], audio: pa.PyAudio | None) -> Exception | Non
     return failure
 
 
-def _manifest(folder: pathlib.Path) -> list[dict]:
+def _manifest(path: pathlib.Path) -> list[dict]:
     """Recording chunks from the manifest. Only our own: an app track and a "<track>_NN.wav" file in this folder, so a
     foreign or damaged manifest cannot point to deleting or overwriting a file somewhere else."""
-    path = folder / MANIFEST
-    data = transcript.read_json(path, [])
-    return [
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise ValueError
+    except ValueError as error:
+        raise OSError(
+            tr("Cannot read the recording manifest. Audio fragments are in {folder}.", folder=path.parent)
+        ) from error
+    parts = [
         k
         for k in data
         if isinstance(k, dict)
@@ -168,6 +176,9 @@ def _manifest(folder: pathlib.Path) -> list[dict]:
         and isinstance(k.get("начало"), int | float)
         and re.fullmatch(rf"{re.escape(k['дорожка'])}_\d{{2,}}\.wav", str(k.get("файл", "")))
     ]
+    if len(parts) != len(data) and any(path.parent.glob("*_*.wav")):
+        raise OSError(tr("Cannot read the recording manifest. Audio fragments are in {folder}.", folder=path.parent))
+    return parts
 
 
 LOOPBACK = " [Loopback]"  # PyAudioWPatch's name for recording what plays on an output device
@@ -224,21 +235,31 @@ def defaults() -> tuple[str | None, str | None]:
     return result[0], result[1]
 
 
-def collect(folder: pathlib.Path) -> str:
-    """Joins each track's chunks from the manifest into one 16 kHz FLAC, gaps become silence; deletes the chunks. Then
-    the video; the result is what to tell the user if the video was not assembled."""
-    manifest = _manifest(folder)
-    for name in sorted({k["дорожка"] for k in manifest}):
-        chunks = [
-            (int(k["начало"] * recognition.SAMPLE_RATE), folder / k["файл"])
-            for k in manifest
-            if k["дорожка"] == name and (folder / k["файл"]).exists() and (folder / k["файл"]).stat().st_size >= 1024
-        ]
+def _assemble_tracks(folder: pathlib.Path, manifest: list[dict]) -> None:
+    for name in sorted({part["дорожка"] for part in manifest}):
+        chunks = []
+        for part in manifest:
+            if part["дорожка"] == name:
+                path = folder / part["файл"]
+                if path.stat().st_size >= 1024:
+                    chunks.append((int(part["начало"] * recognition.SAMPLE_RATE), path))
         if chunks:
-            recognition.join_flac(chunks, folder / f"{name}.flac")
-    for k in manifest:
-        (folder / k["файл"]).unlink(missing_ok=True)
-    (folder / MANIFEST).unlink(missing_ok=True)
+            working = folder / f".{name}.tmp.flac"
+            recognition.join_flac(chunks, working)
+            transcript.replace(working, folder / f"{name}.flac")
+
+
+def collect(folder: pathlib.Path) -> str:
+    """Commit all tracks before deleting any source. The renamed manifest makes cleanup restartable."""
+    source, done = folder / MANIFEST, folder / ASSEMBLED
+    if source.exists():
+        manifest = _manifest(source)
+        _assemble_tracks(folder, manifest)
+        transcript.replace(source, done)
+    if done.exists():
+        for part in _manifest(done):
+            (folder / part["файл"]).unlink(missing_ok=True)
+        done.unlink()
     return _assemble_video(folder)
 
 
@@ -258,7 +279,9 @@ def _assemble_video(folder: pathlib.Path) -> str:
 def interrupted_all(recordings: pathlib.Path, except_: pathlib.Path | None = None) -> list[pathlib.Path]:
     """Recording folders with a manifest of audio or screen chunks: the recording was cut off or the video was not
     assembled."""
-    folders = {p.parent for manifest in (MANIFEST, screen.CHUNK_LIST) for p in recordings.glob(f"*/{manifest}")}
+    folders = {
+        p.parent for manifest in (MANIFEST, ASSEMBLED, screen.CHUNK_LIST) for p in recordings.glob(f"*/{manifest}")
+    }
     return sorted(p for p in folders if p != except_)
 
 
@@ -373,7 +396,8 @@ class Recording:
 
     def _new_tracks(self, audio: pa.PyAudio, devices: dict[str, dict], tracks: dict[str, Track]) -> None:
         """Opens a track per device into tracks and adds them to the manifest."""
-        now, manifest = time.monotonic(), _manifest(self.folder)
+        manifest_path = self.folder / MANIFEST
+        now, manifest = time.monotonic(), _manifest(manifest_path) if manifest_path.exists() else []
         start = self.duration()
         for name, device in devices.items():
             file = f"{name}_{self._number:02d}.wav"

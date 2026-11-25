@@ -83,7 +83,7 @@ class TestMatchQtCrt(unittest.TestCase):
     def test_replaces_python_crt_with_pyside_copies(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            internal, qt = root / "_internal", root / "_internal" / "PySide6"
+            internal, qt = root / build.RUNTIME, root / build.RUNTIME / "PySide6"
             qt.mkdir(parents=True)
             (internal / "VCRUNTIME140.dll").write_bytes(b"python-old")
             (qt / "VCRUNTIME140.dll").write_bytes(b"qt-new")

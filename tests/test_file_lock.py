@@ -17,7 +17,7 @@ import unittest
 from collections.abc import Callable, Iterator
 from unittest import mock
 
-from knotes import ai_tools, catalog, failures, minutes, notes, privacy, projects, settings, spending, tasks
+from knotes import providers, ai_tools, catalog, failures, minutes, notes, privacy, projects, settings, spending, tasks
 from knotes import transcript
 from knotes.mcp import ToolError
 
@@ -222,7 +222,9 @@ class TestEditsAtOnce(_Meeting):
         params = mock.Mock(service=mock.Mock(key_needed=False, address="http://localhost:1/v1", kind="чат"))
         params.model, params.key = "м", ""
         with (
-            mock.patch.object(minutes.providers, "model_answer", return_value=("# Протокол окна\n", 0.0)),
+            mock.patch.object(
+                minutes.providers, "model_answer", return_value=("# Протокол окна\n", providers.Charge(0.0))
+            ),
             mock.patch.object(minutes, "input_", return_value="вход"),
             _stopped(self, lambda: ai_tools.update_protocol(self.folder.name, "# Правка помощника")),
         ):

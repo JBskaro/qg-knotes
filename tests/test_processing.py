@@ -8,11 +8,12 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import numpy as np
 
-from knotes import catalog, meeting_jobs, spending
+from knotes import catalog, meeting_jobs, spending, transcript
 from knotes import settings
 from knotes import providers
 from knotes import recognition
@@ -51,6 +52,27 @@ class TestProcessing(unittest.TestCase):
             return _answer((0.5, "Привет", "speaker_0"))
         return _answer((3.5, "Здравствуйте", "speaker_0"))
 
+    def test_competing_job_never_reaches_provider(self):
+        entered, finish = threading.Event(), threading.Event()
+        (self.folder / "собеседники.flac").unlink()
+
+        def provider(*_):
+            entered.set()
+            self.assertTrue(finish.wait(10))
+            return _answer((0.5, "Привет", "speaker_0"))
+
+        with mock.patch.object(providers, "recognize", side_effect=provider) as call, ThreadPoolExecutor(1) as pool:
+            first = pool.submit(recognition.process, self.folder, self.params)
+            try:
+                self.assertTrue(entered.wait(10))
+                with self.assertRaises(transcript.JobBusy):
+                    recognition.process(self.folder, self.params, again=True)
+            finally:
+                finish.set()
+            first.result(timeout=10)
+            recognition.process(self.folder, self.params)
+        self.assertEqual(call.call_count, 1)
+
     def test_tracks_recognized_separately_and_cached(self):
         self.requests = []
         with mock.patch.object(providers, "recognize", self._recognize):
@@ -63,6 +85,29 @@ class TestProcessing(unittest.TestCase):
         self.assertIn("стоимость 0.020 $", text)
         cache = json.loads((self.folder / recognition.ANSWERS).read_text(encoding="utf-8"))
         self.assertEqual(set(cache), {"микрофон", "собеседники"})
+
+    def test_native_receipts_survive_cached_recognition(self):
+        reply = _answer((0.5, "Тест", "s"), price=4.25)
+        params = recognition.Params(providers.find("routerai"), "test")
+        payment = spending.SpeechPayment(self.folder)
+        with mock.patch.object(providers, "_curl", return_value=(200, json.dumps(reply))) as send:
+            file = recognition.process(self.folder, params, payment=payment)
+            recognition.process(self.folder, params, payment=payment)
+        self.assertEqual(send.call_count, 2)
+        self.assertIn("8.500 ₽", file.read_text(encoding="utf-8"))
+        meetings = catalog.list_(self.folder.parent)
+        self.assertEqual(
+            [(e.currency, e.how_many) for e in spending.list_(self.folder.parent, meetings)], [("RUB", 4.25)] * 2
+        )
+        self.assertEqual([(e.currency, e.how_many) for e in spending.from_meetings(meetings)], [("RUB", 8.5)])
+
+    def test_unpriced_transcription_does_not_display_a_zero_charge(self):
+        response = {"text": "Тест", "duration": 2, "usage": {"seconds": 2}}
+        params = recognition.Params(providers.find("groq"), "test")
+        with mock.patch.object(providers, "_curl", return_value=(200, json.dumps(response))):
+            file = recognition.process(self.folder, params, payment=spending.SpeechPayment(self.folder))
+        self.assertIn("стоимость не указана площадкой", file.read_text(encoding="utf-8"))
+        self.assertEqual(spending.list_(self.folder.parent, []), [])
 
     def test_tracks_measured_once_and_not_held(self):
         """Loudness and length are taken once per track and the audio is let go: the engine process reads the file

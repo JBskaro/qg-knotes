@@ -50,7 +50,7 @@ private notes. It runs on Windows 10 and 11.
   microphone and whatever plays on your computer, so Zoom, Teams, Telemost and browser meetings all work. When a
   meeting app turns on your microphone, QG Knotes offers to record.
 - **Speech is recognized on your PC.** GigaAM v3 for Russian or Whisper, offline once the model is downloaded, at no
-  cost. The cloud (OpenRouter, OpenAI, your own server) is there only if you want it.
+  cost. The cloud (OpenRouter, RouterAI, Groq, OpenAI, your own server) is there only if you want it.
 - **"We never agreed to that" takes one click to check.** Every decision and task carries the minute it was said.
   Click it and hear how it went.
 - **Your notes stay yours.** Share your screen with the client: the notepad and the recording bar stay out of the
@@ -136,7 +136,7 @@ costs nothing.
 |---|---|
 | Recording the sound and the screen | Your computer |
 | Speech recognition | Your computer (GigaAM v3 or Whisper). In the cloud only if you pick a service |
-| The minutes | The language model you chose: OpenRouter or OpenAI, Ollama or LM Studio on your own computer, your AI assistant |
+| The minutes | The language model you chose: OpenRouter, RouterAI, Groq, DeepSeek or OpenAI, Ollama or LM Studio on your own computer, your AI assistant |
 | Meetings, transcripts, minutes | The "Documents\QG Knotes" folder |
 | Service keys | Windows Credential Manager |
 | Claude, ChatGPT, Cursor (MCP) | Read the meetings from your computer; there is no server on the network |
@@ -203,7 +203,9 @@ Windows 10 and 11 only, for now.
   pyannote segmentation and WeSpeaker; Silero VAD finds the speech. On Windows, built-in GigaAM tries DirectML on a
   compatible DirectX 12 GPU and falls back to the CPU. Voice detection and speaker separation still use the CPU.
 - **Cloud recognition and minutes** through any service with an OpenAI-compatible API: OpenRouter (ElevenLabs Scribe
-  v2 for speech, Claude Sonnet 5.5 for minutes), Nexara, OpenAI, Ollama, LM Studio or your own server.
+  v2 for speech, Claude Sonnet 5.5 for minutes), RouterAI, Groq and OpenAI. DeepSeek is available for minutes,
+  Nexara for speech. You can also connect Ollama, LM Studio or your own server. Summary shows reported charges
+  in their original currency. Select USD or RUB when both appear in the journal.
 - **Screen recording** together with the sound: the meeting window, the monitor with it or a chosen monitor. The
   recording bar, the notepad and the program's messages stay out of the video and of your screen sharing.
 - **Notes during the meeting**: a notepad on top of the other windows with the minute of each line and the agenda of

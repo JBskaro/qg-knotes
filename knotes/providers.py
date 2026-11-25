@@ -111,6 +111,8 @@ class Provider:
     fields: dict = dataclasses.field(default_factory=dict)
     model_fields: dict = dataclasses.field(default_factory=dict)  # model -> its own request fields
     checking: str = ""  # address endpoint used to check the key
+    currency: str = "USD"
+    output_modality: str = ""
     terms: bool = False  # whether it accepts words for accuracy (keyterms)
     models: tuple[tuple[str, str], ...] = ()  # (id, title) when the list is not taken from the service
     models_endpoint: str = ""  # address endpoint with the list of models
@@ -120,6 +122,17 @@ class Provider:
     @property
     def local_engine(self) -> bool:
         return self.kind == LOCAL
+
+
+@dataclasses.dataclass(frozen=True)
+class Charge:
+    amount: float
+    currency: str = "USD"
+
+    @classmethod
+    def from_answer(cls, answer: dict, default_currency: str = "USD") -> "Charge":
+        usage = answer.get("usage") or {}
+        return cls(cost(answer), str(usage.get("currency") or default_currency).upper())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -463,6 +476,10 @@ def recognize(provider: Provider, key: str, request: Request) -> dict:
         return recognize(provider, key, dataclasses.replace(request, diarization=False))
     if code != 200:
         raise _failure(provider.title, code, text)
+    return _transcription_answer(provider, text)
+
+
+def _transcription_answer(provider: Provider, text: str) -> dict:
     answer = _json(text, provider.title)
     if not readable(answer):
         log.warning("%s answered in an unknown format", provider.title)
@@ -473,6 +490,9 @@ def recognize(provider: Provider, key: str, request: Request) -> dict:
                 title=provider.title,
             )
         )
+    usage = answer.get("usage") or {}
+    if provider.currency != "USD" and usage.get("cost") is not None:
+        usage.setdefault("currency", provider.currency)
     return answer
 
 
@@ -482,7 +502,7 @@ def _no_retention() -> ProviderError:
     )
 
 
-def model_answer(provider: Provider, key: str, body: dict) -> tuple[str, float]:
+def model_answer(provider: Provider, key: str, body: dict) -> tuple[str, Charge]:
     """Request to the language model (chat/completions): the response text and the cost, if the service reports it."""
     _check_address(provider.address, PLAIN_TRANSCRIPT)
     title = provider.title
@@ -503,7 +523,7 @@ def model_answer(provider: Provider, key: str, body: dict) -> tuple[str, float]:
                 title=title,
             )
         )
-    return content, cost(answer)
+    return content, Charge.from_answer(answer, provider.currency)
 
 
 def _reason(text: str) -> str:
@@ -565,7 +585,18 @@ def models(provider: Provider, key: str) -> list[tuple[str, str]]:
     code, text = _curl(key, ["--max-time", str(SERVICE_S)], point(provider, provider.models_endpoint))
     if code != 200:
         raise _failure(provider.title, code, text, NO_MODELS)
-    return [(m["id"], m.get("name") or m["id"]) for m in _json(text, provider.title).get("data", [])]
+    catalog = _json(text, provider.title).get("data", [])
+    if provider.output_modality:
+        catalog = [
+            m
+            for m in catalog
+            if provider.output_modality in (m.get("architecture") or {}).get("output_modalities", [])
+            and (
+                provider.output_modality != "text"
+                or "text" in (m.get("architecture") or {}).get("input_modalities", [])
+            )
+        ]
+    return [(m["id"], m.get("name") or m["id"]) for m in catalog]
 
 
 def words(answer: dict) -> list[dict]:

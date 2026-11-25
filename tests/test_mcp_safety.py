@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from knotes import ai_tools, catalog, mcp, minutes, notes, settings, transcript
+from knotes import providers, ai_tools, catalog, mcp, minutes, notes, settings, transcript
 
 
 def _exchange(tools: dict, *messages: dict) -> list[dict]:
@@ -170,7 +170,7 @@ class TestMeetingTools(unittest.TestCase):
         params.model, params.key = "м", ""
         with (
             mock.patch.object(minutes, "input_", return_value="вход") as input_,
-            mock.patch.object(minutes.providers, "model_answer", return_value=("# Итоги\n", 0.0)),
+            mock.patch.object(minutes.providers, "model_answer", return_value=("# Итоги\n", providers.Charge(0.0))),
         ):
             minutes.compose(self.folder, params)
         input_.assert_called_once()

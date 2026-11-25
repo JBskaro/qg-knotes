@@ -42,6 +42,19 @@ class TestSummaryWindow(unittest.TestCase):
         self.window.close()
         self._temporary.cleanup()
 
+    def test_switch_currency_updates_spent_chart_and_table(self):
+        folder = next(v.folder for v in self.window._all_meetings)
+        spending.write(folder, catalog.MINUTES_KIND, "model", providers.Charge(12.75, "RUB"))
+        self.window._spending_read(spending.revision(self.recordings), self.window._read_data())
+        self.assertEqual(self.window.currency.count(), 2)
+        self.assertEqual(self.window.tiles[0].value.text(), catalog.money(0.5))
+        self.window.currency.setCurrentText("RUB")
+        self.assertEqual(self.window.tiles[0].value.text(), catalog.money(12.75, "RUB"))
+        self.assertIn(
+            "₽",
+            self.window.by_meetings.item(0, 5).text() + self.window.by_meetings.item(1, 5).text(),
+        )
+
     def test_opening_flashes_no_window(self):
         """The strip of a tile is placed in the window before it is shown."""
         self.assertEqual(self.flashed, [])

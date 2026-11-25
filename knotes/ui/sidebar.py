@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -72,9 +73,11 @@ class SidebarPanel(QFrame):
         self._row_label.setObjectName("второй_текст")
         self._plus = style.icon_button(style.PLUS, tr("New project"), self.new_project.emit)
         tip = tr("Update available")
-        self.update_button = style.icon_button(style.REFRESH, tip)
+        self.update_button = QToolButton()
+        self.update_button.setToolTip(tip)
+        self.update_button.setIconSize(QSize(16, 16))
         self.update_button.setObjectName("обновление")
-        self.update_button.setFixedSize(34, 34)
+        self.update_button.setFixedSize(36, 34)
         self.update_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.update_button.setAccessibleName(tip)
         self.update_button.hide()
@@ -142,6 +145,7 @@ class SidebarPanel(QFrame):
     def repaint_theme(self) -> None:
         """Icons in the theme's text color: redrawn after a theme change."""
         color = self.palette().color(QPalette.ColorRole.WindowText)
+        self.update_button.setIcon(style.icon(style.SYNC, color))
         for code, sign, _ in (*SECTIONS, *MEETINGS, *BOTTOM):
             if code == "свернуть" and self.collapsed:
                 sign = style.EXPAND_PANEL

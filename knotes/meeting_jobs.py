@@ -45,8 +45,6 @@ class Jobs(QObject):
         self._progress_changed: set[pathlib.Path] = set()
         self._progress_arrived.connect(self._on_progress)
 
-    # --- speech recognition ---------------------------------------------------------------------------------
-
     def recognize(
         self, folder: pathlib.Path, params: recognition.Params, again: bool = False, delete_after: bool = False
     ) -> bool:
@@ -97,7 +95,7 @@ class Jobs(QObject):
         """A failure stays in the meeting, so the list shows it with Retry."""
         self.busy.pop(folder, None)
         self.progress.pop(folder, None)
-        if isinstance(result, Exception) and folder.exists():
+        if isinstance(result, Exception) and not isinstance(result, transcript.JobBusy) and folder.exists():
             catalog.mark_error(folder, failures.text(result))
         self.transcribed.emit(folder, result)
 
@@ -106,7 +104,7 @@ class Jobs(QObject):
         found = recording.interrupted_all(recordings) if recordings.exists() else []
         for folder in found:
             self.busy[folder] = Busy.RESTORING
-            audio = (folder / transcript.MANIFEST).exists()  # no audio manifest: only the video was not assembled
+            audio = any((folder / name).exists() for name in (transcript.MANIFEST, transcript.ASSEMBLED))
             run_in_background(
                 self.pool,
                 lambda p=folder: recording.collect(p),
@@ -138,8 +136,6 @@ class Jobs(QObject):
         for folder in self._progress_changed & self.progress.keys():
             self.progress_shown.emit(folder, self.progress[folder])
         self._progress_changed.clear()
-
-    # --- minutes --------------------------------------------------------------------------------------------
 
     def compose(self, folder: pathlib.Path, params: minutes.Params) -> None:
         self.minutes.add(folder)

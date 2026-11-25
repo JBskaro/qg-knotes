@@ -80,8 +80,9 @@ class TestAssistant(unittest.TestCase):
 
     def test_request_to_assistant(self):
         request = minutes.assistant_request(self.folder)
-        self.assertIn("«Загрузка остатков»", request)
-        self.assertIn(self.folder.name, request)
+        self.assertNotIn("Загрузка остатков", request)
+        self.assertNotIn(self.folder.name, request)
+        self.assertIn(ai_tools.privacy.meeting_id(self.folder.name), request)
 
 
 class TestMcpPrompt(unittest.TestCase):

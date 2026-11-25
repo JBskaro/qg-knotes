@@ -511,7 +511,9 @@ class TestQuestion(unittest.TestCase):
     def test_question_goes_to_minutes_model_with_minutes_and_cost(self):
         with (
             mock.patch.object(settings, "address_key", return_value="ключ"),
-            mock.patch.object(providers, "model_answer", return_value=("Смету до пятницы [00:06].\n", 0.0012)) as ask,
+            mock.patch.object(
+                providers, "model_answer", return_value=("Смету до пятницы [00:06].\n", providers.Charge(0.0012))
+            ) as ask,
         ):
             answer = self.flow.ask("что клиент обещал прислать?")
         self.assertEqual(answer, "Смету до пятницы [00:06].")
@@ -535,7 +537,7 @@ class TestQuestion(unittest.TestCase):
         ]
         with (
             mock.patch.object(settings, "address_key", return_value="ключ"),
-            mock.patch.object(providers, "model_answer", return_value=("Нет ответа.", 0.0)) as ask,
+            mock.patch.object(providers, "model_answer", return_value=("Нет ответа.", providers.Charge(0.0))) as ask,
         ):
             self.flow.ask("что было в конце?")
         content = ask.call_args.args[2]["messages"][1]["content"]
@@ -548,7 +550,9 @@ class TestQuestion(unittest.TestCase):
         self.flow._phrases.append(live.Phrase(70.0, 72.0, "собеседники", "Звоните на +7 913 555-12-34."))  # noqa: SLF001
         with (
             mock.patch.object(settings, "address_key", return_value="ключ"),
-            mock.patch.object(providers, "model_answer", return_value=("По [ТЕЛЕФОН_1] [01:10].", 0.001)) as ask,
+            mock.patch.object(
+                providers, "model_answer", return_value=("По [ТЕЛЕФОН_1] [01:10].", providers.Charge(0.001))
+            ) as ask,
         ):
             answer = self.flow.ask("куда звонить?")
         content = ask.call_args.args[2]["messages"][1]["content"]
@@ -559,7 +563,7 @@ class TestQuestion(unittest.TestCase):
     def test_answer_kept_when_the_spending_log_is_not_written(self):
         with (
             mock.patch.object(settings, "address_key", return_value="ключ"),
-            mock.patch.object(providers, "model_answer", return_value=("Ответ.", 0.01)),
+            mock.patch.object(providers, "model_answer", return_value=("Ответ.", providers.Charge(0.01))),
             mock.patch.object(spending, "write", side_effect=PermissionError(13, "занят")),
             self.assertLogs("knotes.live", "WARNING"),
         ):

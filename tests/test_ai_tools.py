@@ -9,7 +9,7 @@ from unittest import mock
 
 from knotes import ai_tools
 from knotes import tasks, notes, catalog, projects, minutes, transcript
-from knotes import settings
+from knotes import providers, settings, spending
 from knotes.mcp import ToolError
 
 MINUTES = """# Итоги встречи 20.10.2026 по загрузке
@@ -228,6 +228,13 @@ class TestTools(unittest.TestCase):
         self.assertEqual((result["всего"], result["речь"], result["протоколы"]), (0.35, 0.15, 0.2))
         self.assertEqual([m["модель"] for m in result["по_моделям"]], ["ElevenLabs Scribe v2", "Claude Sonnet 5.5"])
         self.assertEqual(result["по_встречам"][1]["всего"], 0.3)
+
+    def test_costs_separate_native_currencies(self):
+        spending.write(self.first, catalog.MINUTES_KIND, "router-model", providers.Charge(8.5, "RUB"))
+        result = _call("get_costs")
+        self.assertEqual((result["валюта"], result["всего"]), ("USD", 0.35))
+        self.assertEqual(result["по_валютам"]["RUB"]["протоколы"], 8.5)
+        self.assertEqual(result["по_валютам"]["USD"]["всего"], 0.35)
 
     def test_names_title_and_project(self):
         result = _call("set_speaker_names", meeting="2026-10-20_10-00", names={"Собеседник 1": "Анна Петрова"})

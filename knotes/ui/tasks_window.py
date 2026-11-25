@@ -1,29 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""The "Tasks" page: a board of tasks, remarks, questions and tentative decisions from the minutes plus own tasks,
-in columns. A project board has the project's columns ("To do", "In progress", "Done" and the ones added, each
-counting as one of these three); the board of all projects has the three, a card of a project column carries its
-name.
-
-A card is dragged with the mouse to another column or another place in the column; the right button opens a menu:
-column, priority, labels, due date, assignee, archive. "Set up the board", on any board, opens the board settings:
-the columns of a project and the labels; a double click on a column name of a project board edits it in place. The
-search is the top bar of the meetings window, lent to the board. A click on a card opens a panel on the right:
-everything the card has is edited there and saved by itself. At the bottom of a column is a quick add line. The
-source is the meeting, date and minute the task came from: a click opens the meeting at that place.
-
-The page puts together the parts in modules of their own: the card (board_card), the column and its header
-(board_columns), the board settings (board_settings with board_columns_page and the labels tab in board_labels), the
-card panel (board_panel), the filters (board_filters), the labels (board_labels), the menus (board_menus), the edit
-fields (board_fields), the signs (board_icons), the chips (board_chips), the style sheet (board_style) and the writes
-(board_writes).
-"""
+"""Project and global task boards."""
 
 import datetime
 import logging
 import pathlib
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QKeyEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -39,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from knotes import catalog, failures, meeting_list, projects, tasks, language
 from knotes.ui import board_filters, board_style, style
+from knotes.ui.background import run_in_background
 from knotes.ui.board_card import CardLook
 from knotes.ui.board_columns import COLUMN_WIDTH, ColumnTitle, TaskColumn, column_header
 from knotes.ui.board_fields import AddField
@@ -54,17 +38,7 @@ SHOWN = 50  # cards a "done" column shows at first and adds with each "Show more
 
 
 class TasksWindow(QWidget):
-    """The board for the chosen project (None for all, "" for no project). The open_place(folder, second) signal
-    comes from a click on a card source.
-
-    The columns show the cards in memory (_lay_out); filters, search, archive, "Show more" and the theme only lay
-    them out again. The cards come into memory in these ways:
-    - display(): reads them from the folder; on choosing a project, after a quick add and after the labels dialog;
-    - _refresh(): display() without the meeting list after an edit from the board, once the click or menu has
-      finished (_refresh_later); the card open in the panel is taken fresh;
-    - _show_saved(): the cards the panel saved replace theirs without reading the folder (_show_saved_later);
-    - _board_changed(): the columns or labels were changed: the columns are built again, then _refresh()
-      (_board_changed_later)."""
+    """Read cards off the GUI thread and render only the visible batch in each column."""
 
     open_place = Signal(pathlib.Path, float)
     search_hint_changed = Signal(str)  # the board's own project button changed what it searches
@@ -76,8 +50,10 @@ class TasksWindow(QWidget):
         project: str | None = None,
         *,
         meetings: list[catalog.Meeting] | None = None,
+        pool: QThreadPool | None = None,
     ):
         super().__init__()
+        self._pool, self._read_number = pool, 0
         self.recordings, self.project = recordings, project
         self._projects_list, self._project_looks = list(projects_[0]), projects_[1]
         self._cards: list[tasks.Task] = []
@@ -138,6 +114,9 @@ class TasksWindow(QWidget):
         for widget in (self._project_button, *self.filters.values(), self.archive):
             top.addWidget(widget)
         top.addStretch()
+        self._loading = QLabel(language.tr("Loading tasks…"))
+        self._loading.hide()
+        top.addWidget(self._loading)
         top.addWidget(self.settings_button)
         top.addWidget(add)
         self._row.setContentsMargins(0, 0, 0, 0)
@@ -160,8 +139,6 @@ class TasksWindow(QWidget):
         column.setSpacing(10)
         column.addLayout(top)
         column.addLayout(board, 1)
-
-    # --- columns -------------------------------------------------------------------------------------------
 
     def _set_columns(self) -> None:
         """The columns of the chosen board: the project's own, the three bases on the board of all projects."""
@@ -236,8 +213,6 @@ class TasksWindow(QWidget):
         self._refresh_filters()
         self._lay_out()
 
-    # --- filters and display -------------------------------------------------------------------------------
-
     def _pick_project(self, project: str | None, *, meetings: list[catalog.Meeting] | None = None) -> None:
         self.panel.close_view()
         if not self.panel.isHidden():  # the card was not saved: the panel stays until closed again
@@ -245,33 +220,53 @@ class TasksWindow(QWidget):
         self.project, self._meetings, self._shown = project, meetings, {}
         name = language.tr("All projects") if project is None else project or language.tr("No project")
         self._project_button.setText(style.menu_text(name))
-        self._project_button.setMenu(
-            style.projects_menu(self, self._projects_list, self._project_looks, project, self._pick_project)
-        )
         heading = language.tr("Tasks") if project is None else language.tr("Tasks - {project}", project=name)
         self.window().setWindowTitle(f"{heading} - {style.NAME}")
         self.search_hint_changed.emit(self.search_hint)
         self._set_columns()
-        self.display(reread=False)
+        self.display(reread=False, background=True)
 
-    def _load(self, reread: bool) -> None:
-        """The cards and labels; a folder that cannot be read (a network drive gone) gives an empty board and says
-        why."""
-        try:
-            if reread or self._meetings is None:
-                self._meetings = catalog.list_(self.recordings)
-            self._cards = tasks.tasks(self.recordings, self.project, self._meetings)
-            self._labels = tasks.labels(self.recordings)
-            self._marks = tasks.column_marks(self.recordings, self._cards) if self.project is None else {}
-        except OSError as error:
-            log.warning("the board was not read: %s", error)
-            self._meetings, self._cards, self._labels, self._marks = [], [], [], {}
-            style.ask(self, language.tr("Tasks"), failures.text(error), warning=True)
+    def display(self, reread: bool = True, *, background: bool = False) -> None:
+        self._read_number += 1
+        number, project = self._read_number, self.project
+        meetings = None if reread else self._meetings
+        root = self.recordings
 
-    def display(self, reread: bool = True) -> None:
-        """Rebuilds the board from the minutes and own tasks; reread: the meeting list too, an edit on the board does
-        not change it. The card open in the panel may be gone: its minutes were written again without it."""
-        self._load(reread)
+        def read() -> tuple:
+            rows = catalog.list_(root) if meetings is None else meetings
+            cards = tasks.tasks(root, project, rows)
+            marks = tasks.column_marks(root, cards) if project is None else {}
+            return rows, cards, tasks.labels(root), marks
+
+        def received(result: object) -> None:
+            if number != self._read_number:
+                return
+            self._loading.hide()
+            self.setEnabled(True)
+            if isinstance(result, Exception):
+                self._meetings, self._cards, self._labels, self._marks = [], [], [], {}
+                self._display_cards()
+                style.ask(self, language.tr("Tasks"), failures.text(result), warning=True)
+                return
+            self._meetings, self._cards, self._labels, self._marks = result
+            self._projects_list = catalog.projects(self._meetings, self._projects_list)
+            self._project_button.setMenu(
+                style.projects_menu(self, self._projects_list, self._project_looks, project, self._pick_project)
+            )
+            self._display_cards()
+
+        if background and self._pool is not None:
+            self._loading.show()
+            self.setEnabled(False)
+            run_in_background(self._pool, read, received)
+        else:
+            try:
+                result = read()
+            except OSError as error:
+                result = error
+            received(result)
+
+    def _display_cards(self) -> None:
         opened = self.panel.task
         if opened is not None and not self.panel.isHidden() and all(z.key != opened.key for z in self._cards):
             self.panel.discard()
@@ -307,8 +302,7 @@ class TasksWindow(QWidget):
         return tasks.in_order([z for z in list_ if self._place_of(z) == key], today)
 
     def _limit(self, key: str) -> int | None:
-        """A "done" column grows without end: it shows the first cards and more on "Show more"."""
-        return self._shown.get(key, SHOWN) if self.columns[key].column.base == tasks.DONE else None
+        return self._shown.get(key, SHOWN)
 
     def _card_look(self, today: datetime.date) -> CardLook:
         return CardLook(today, {m.name: m.color for m in self._labels}, self.panel.key(), self._marks)
@@ -343,8 +337,6 @@ class TasksWindow(QWidget):
     def _mark_open(self) -> None:
         for col in self.columns.values():
             col.mark(self.panel.key())
-
-    # --- actions -------------------------------------------------------------------------------------------
 
     def _card_saved(self, task: tasks.Task) -> None:
         """The panel wrote the card: it is drawn once the click or menu has finished."""

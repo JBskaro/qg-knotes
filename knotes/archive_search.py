@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Rebuildable in-memory index of the open archive. The window serializes access in background jobs."""
 
+import bisect
 import dataclasses
 import pathlib
 import re
+import zlib
 
 from knotes import catalog, minutes, notebook, notes, transcript
 
@@ -27,14 +29,51 @@ def _match(kind: str, key: str, title: str, original: str, at: int) -> Hit:
     return Hit(kind, key, title, excerpt, transcript.seconds_list(stamp) if stamp else None)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class TextBlocks:
+    starts: list[int]
+    blocks: list[bytes]
+
+    @classmethod
+    def pack(cls, text: str) -> "TextBlocks":
+        starts, blocks = [], []
+        start = 0
+        while start < len(text):
+            newline = text.find("\n", start + 8192)
+            end = len(text) if newline < 0 else newline + 1
+            starts.append(start)
+            blocks.append(zlib.compress(text[start:end].encode("utf-8"), level=1))
+            start = end
+        return cls(starts, blocks)
+
+    def at(self, offset: int) -> tuple[str, int]:
+        index = bisect.bisect_right(self.starts, offset) - 1
+        return zlib.decompress(self.blocks[index]).decode("utf-8"), offset - self.starts[index]
+
+
+@dataclasses.dataclass(slots=True)
 class Document:
     kind: str
     key: str
     title: str
     owner: str
-    original: str
+    original: str | TextBlocks
     body: str
+
+    @classmethod
+    def indexed(cls, identity: tuple, text: str) -> "Document":
+        body = catalog.for_search(text)
+        if text == body:
+            return cls(*identity, body, body)
+        original = TextBlocks.pack(text) if len(text) >= 32768 and len(text) == len(body) else text
+        return cls(*identity, original, body)
+
+    def match(self, title: str, offset: int) -> Hit:
+        if isinstance(self.original, TextBlocks):
+            text, offset = self.original.at(offset)
+        else:
+            text = self.original
+        return _match(self.kind, self.key, self.title or title, text, offset)
 
 
 class ArchiveIndex:
@@ -62,7 +101,7 @@ class ArchiveIndex:
             self.files.pop(path, None)
             self.stamps.pop(path, None)
             return
-        self.files[path] = [Document(*identity, text, catalog.for_search(text)) for identity, text in entries]
+        self.files[path] = [Document.indexed(identity, text) for identity, text in entries]
         self.stamps[path] = stamp
 
     def sync(self, root: pathlib.Path, meetings: list[catalog.Meeting]) -> None:
@@ -99,5 +138,5 @@ class ArchiveIndex:
                     continue
                 offset = doc.body.find(query)
                 if offset >= 0:
-                    hits.append(_match(doc.kind, doc.key, doc.title or titles.get(doc.key, ""), doc.original, offset))
+                    hits.append(doc.match(titles.get(doc.key, ""), offset))
         return hits

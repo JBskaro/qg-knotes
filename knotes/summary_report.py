@@ -24,22 +24,22 @@ def number(value: float) -> str:
 
 def dollars(text: str) -> str:
     """A sum as the interface language writes it: 0,8 $ in Russian, $0.8 in English."""
-    return f"{text} $" if language.current() == "ru" else f"${text}"
+    return catalog.currency_amount(text, "USD")
 
 
-def money(amount: float) -> str:
-    return catalog.money(amount) if amount else dollars("0")
+def money(amount: float, currency: str = "USD") -> str:
+    return catalog.money(amount, currency) if amount else catalog.currency_amount("0", currency)
 
 
 def clock(seconds: float) -> str:
     return catalog.duration(seconds) if seconds >= 30 else tr("0 min")
 
 
-def or_dash(amount: float) -> str:
+def or_dash(amount: float, currency: str = "USD") -> str:
     """For a narrow column: no money is a dash, less than a cent is "< 0,01 $"."""
     if not amount:
         return "-"
-    return "< " + dollars(number(0.01)) if amount < 0.01 else catalog.money(amount)
+    return "< " + catalog.currency_amount(number(0.01), currency) if amount < 0.01 else catalog.money(amount, currency)
 
 
 def _before(when: str, how_many: object) -> str:
@@ -65,6 +65,7 @@ class Selection:
     shift: int = 0
     dates: tuple[datetime.date, datetime.date] | None = None
     project: str | None = None
+    currency: str = "USD"
 
     def period(self, today: datetime.date) -> tuple[datetime.date | None, datetime.date]:
         return summary.period(self.kind, today, self.dates, 0 if self.kind == summary.CUSTOM else self.shift)
@@ -113,6 +114,7 @@ def report(
 ) -> Report:
     """The figures, charts, projects and table rows for the selection, from the meetings and spending read once; a
     deleted meeting's project is the one at the time of spending."""
+    expenses = [expense for expense in expenses if expense.currency == selection.currency]
     if selection.project is not None:
         meetings = [v for v in meetings if v.project == selection.project]
         expenses = [t_ for t_ in expenses if t_.project == selection.project]
@@ -122,7 +124,10 @@ def report(
     if previous := selection.previous(today):
         when, (old_s, old_by) = previous
         old = summary.result(meetings, old_s, old_by, expenses)
-        before_cost, before_count = _before(when, money(old.cost)), _before(when, old.meetings_count)
+        before_cost, before_count = (
+            _before(when, money(old.cost, selection.currency)),
+            _before(when, old.meetings_count),
+        )
     average = (
         tr("{time} on average", time=clock(result.seconds / result.meetings_count)) if result.meetings_count else ""
     )
@@ -136,7 +141,12 @@ def report(
         headings=(tr(CHART_TITLES[step][0]), tr(CHART_TITLES[step][1])),
         costs=[(p, tuple(how_many for _, how_many in summary.by_kinds(i))) for p, i in steps],
         cost_tips=[
-            "\n".join([tr("{step} · total {amount}", step=p, amount=money(i.cost)), *summary.arrangement(i)])
+            "\n".join(
+                [
+                    tr("{step} · total {amount}", step=p, amount=money(i.cost, selection.currency)),
+                    *summary.arrangement(i, selection.currency),
+                ]
+            )
             for p, i in steps
         ],
         hours_bars=[(p, (i.seconds / 3600,)) for p, i in steps],
@@ -161,26 +171,26 @@ class Line:
     quiet: bool = False
 
 
-def project_lines(projects: list[summary.Project]) -> list[Line]:
+def project_lines(projects: list[summary.Project], currency: str = "USD") -> list[Line]:
     """Projects by hours, with the strip relative to the longest one."""
     largest = max((p.result.seconds for p in projects), default=0) or 1
     lines = []
     for p in projects:
         without = p.name == catalog.NO_PROJECT
         name = tr(p.name) if without else p.name
-        split = catalog.breakdown(p.result.cost, p.result.minutes_list)
+        split = catalog.breakdown(p.result.cost, p.result.minutes_list, currency)
         tooltip = tr(
             "{project} · meetings: {n} · {clock} · {amount}",
             project=name,
             n=p.result.meetings_count,
             clock=clock(p.result.seconds),
-            amount=money(p.result.cost),
+            amount=money(p.result.cost, currency),
         )
         lines.append(
             Line(
                 name=name,
                 share=p.result.seconds / largest,
-                figure=f"{clock(p.result.seconds)} · {money(p.result.cost)}",
+                figure=f"{clock(p.result.seconds)} · {money(p.result.cost, currency)}",
                 tooltip=tooltip + (f" ({split})" if split else ""),
                 project="" if without else p.name,
                 quiet=without,
@@ -189,24 +199,26 @@ def project_lines(projects: list[summary.Project]) -> list[Line]:
     return lines
 
 
-def model_lines(result: summary.Outcome) -> list[Line]:
+def model_lines(result: summary.Outcome, currency: str = "USD") -> list[Line]:
     """Models for the period and their shares of the recorded spending."""
     kinds = list(summary.KINDS)
     return [
         Line(
             name=" · ".join(ch for ch in (tr(kind), name) if ch),
             share=share,
-            figure=f"{money(how_many)} · {share:.0%}",
+            figure=f"{money(how_many, currency)} · {share:.0%}",
             tooltip=line,
             kind=kinds.index(kind),
         )
-        for (kind, name, how_many, share), line in zip(summary.models(result), summary.arrangement(result), strict=True)
+        for (kind, name, how_many, share), line in zip(
+            summary.models(result), summary.arrangement(result, currency), strict=True
+        )
     ]
 
 
 def spent_figure(report_: Report, error: str = "") -> Figure:
     hint = "\n".join(filter(None, (tr("From the local spending journal"), report_.before, error)))
-    return Figure(money(report_.result.cost), hint)
+    return Figure(money(report_.result.cost, report_.selection.currency), hint)
 
 
 def balance_figure(balance: object, provider: str, meetings: list[catalog.Meeting]) -> Figure:

@@ -57,7 +57,7 @@ def _meeting(meeting: str) -> catalog.Meeting:
     recordings = settings.load().recordings
     found = catalog.meeting(recordings / meeting) if custom else None
     if found is None and meeting.startswith("meeting-"):
-        found = next((v for v in catalog.list_(recordings) if _opaque("meeting-", v.folder.name) == meeting), None)
+        found = next((v for v in catalog.list_(recordings) if privacy.meeting_id(v.folder.name) == meeting), None)
     if found is None:
         raise ToolError("Встреча не найдена. Имена встреч - в list_meetings, поле «встреча».")
     return found
@@ -134,7 +134,7 @@ def _hide_field(hider: privacy.Hider, field: str, value: object) -> object:
         return _opaque("task-", value)
     hidden = _hide_value(hider, value)
     if field == "встреча" and isinstance(value, str) and hidden != value:
-        return _opaque("meeting-", value)
+        return privacy.meeting_id(value)
     return hidden
 
 
@@ -390,6 +390,16 @@ def get_costs(project: str | None = None, date_from: str | None = None, date_to:
     meetings = [v for v in meetings if project is None or v.project == project]
     s, by = _date(date_from, "date_from"), (_date(date_to, "date_to") or datetime.date(9998, 12, 31))
     by += datetime.timedelta(days=1)
+    grouped = {}
+    for expense in expenses_:
+        if (s is None or expense.when.date() >= s) and expense.when.date() < by:
+            grouped.setdefault(expense.currency, []).append(expense)
+    values = {unit: _cost_details(meetings, rows, s, by) for unit, rows in grouped.items()}
+    dollars = values.get("USD") or _cost_details(meetings, [], s, by)
+    return {**dollars, "валюта": "USD", "по_валютам": values}
+
+
+def _cost_details(meetings: list, expenses_: list, s: datetime.date | None, by: datetime.date) -> dict:
     result = summary.result(meetings, s, by, expenses_)
     return {
         "всего": round(result.cost, 4),
@@ -452,8 +462,17 @@ def compose_protocol(meeting: str, kind: str | None = None) -> dict:
     except (providers.ProviderError, OSError) as error:  # FileNotFoundError: the meeting is not recognized
         _restore_kind(found, kind, old_view)
         raise ToolError(failures.text(error)) from error
-    price = catalog.properties(found.folder).get("стоимость_протокола")
-    return _hidden(found.folder, {**_card(found), "текст": file.read_text(encoding="utf-8"), "стоимость": price})
+    properties = catalog.properties(found.folder)
+    price = properties.get("стоимость_протокола")
+    return _hidden(
+        found.folder,
+        {
+            **_card(found),
+            "текст": file.read_text(encoding="utf-8"),
+            "стоимость": price,
+            "валюта": properties.get("валюта_протокола", "USD"),
+        },
+    )
 
 
 def get_protocol_task(meeting: str, kind: str | None = None) -> dict:
@@ -658,7 +677,8 @@ TOOLS = {
         ),
         Tool(
             "get_costs",
-            "Расходы на распознавание речи и протоколы в долларах: всего, по моделям и по встречам.",
+            "Расходы на распознавание речи и протоколы по моделям и встречам. "
+            "Верхний уровень в USD, по_валютам содержит суммы в валюте площадки.",
             FILTER,
             get_costs,
             read_only=True,
