@@ -6,16 +6,18 @@ import logging
 import pathlib
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, QSignalBlocker, Qt, QTimer, QUrl
+from PySide6.QtCore import QAbstractItemModel, QModelIndex, QPoint, Signal, QSignalBlocker, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QCloseEvent,
     QDesktopServices,
     QFont,
     QKeySequence,
+    QMouseEvent,
     QShortcut,
     QTextFormat,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFrame,
     QInputDialog,
     QFileDialog,
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QStyledItemDelegate,
     QTextBrowser,
     QToolButton,
     QVBoxLayout,
@@ -48,6 +51,32 @@ TABLE_ACTIONS = {
     "row-": tr_key("Delete row"),
     "col-": tr_key("Delete column"),
 }
+
+
+class _NoteList(QListWidget):
+    rename_requested = Signal(object)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        item = self.itemAt(event.position().toPoint())
+        if item is not None and event.button() == Qt.MouseButton.LeftButton:
+            self.rename_requested.emit(item.data(ROLE))
+        else:
+            super().mouseDoubleClickEvent(event)
+
+
+class _TitleDelegate(QStyledItemDelegate):
+    renamed = Signal(object, str)
+
+    def setEditorData(self, editor: QLineEdit, index: QModelIndex) -> None:
+        note = index.data(ROLE)
+        label = index.data()
+        editor.setText(note.title or (label.removeprefix("★  ") if note.pinned else label))
+        editor.selectAll()
+
+    def setModelData(self, editor: QLineEdit, _model: QAbstractItemModel, index: QModelIndex) -> None:
+        title = editor.text().strip()
+        if editor.isModified() and title:
+            self.renamed.emit(index.data(ROLE), title)
 
 
 class NotebookPage(QWidget):
@@ -110,7 +139,12 @@ class NotebookPage(QWidget):
         top = QHBoxLayout()
         top.addWidget(new, 1)
         top.addWidget(archive)
-        self.list_ = QListWidget()
+        self.list_ = _NoteList()
+        self.list_.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        delegate = _TitleDelegate(self.list_)
+        delegate.renamed.connect(self._save_title)
+        self.list_.setItemDelegate(delegate)
+        self.list_.rename_requested.connect(self._rename)
         self.list_.currentItemChanged.connect(self._choose)
         self.list_.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_.customContextMenuRequested.connect(self._note_menu)
@@ -206,7 +240,7 @@ class NotebookPage(QWidget):
         reading = bool(self.stack.currentIndex())
         menu.addAction(tr("Edit notes") if reading else tr("Preview note"), lambda: self._view(0 if reading else 1))
         menu.addSeparator()
-        menu.addAction(tr("Rename"), lambda: self._rename(self._current))
+        rename = menu.addAction(tr("Rename"))
         menu.addAction(tr("Unpin note") if self._current.pinned else tr("Pin note"), self._pin)
         projects = menu.addMenu(tr("Note project"))
         for project in ("", *self._projects):
@@ -219,7 +253,8 @@ class NotebookPage(QWidget):
             menu.addAction(tr("Restore from archive") if self._current.archived else tr("Archive note"), self._archive)
             menu.addSeparator()
             menu.addAction(tr("Delete note…"), lambda: self._delete(self._current))
-        menu.exec(self.more.mapToGlobal(self.more.rect().bottomLeft()))
+        if menu.exec(self.more.mapToGlobal(self.more.rect().bottomLeft())) is rename:
+            self._rename(self._current)
 
     def _text_menu(self, point: QPoint) -> None:
         menu = self.body.createStandardContextMenu()
@@ -239,28 +274,47 @@ class NotebookPage(QWidget):
             return
         note = item.data(ROLE)
         menu = QMenu(self.list_)
-        menu.addAction(tr("Rename"), lambda: self._rename(note))
+        rename = menu.addAction(tr("Rename"))
         menu.addAction(tr("Delete note…"), lambda: self._delete(note))
-        menu.exec(self.list_.viewport().mapToGlobal(point))
+        if menu.exec(self.list_.viewport().mapToGlobal(point)) is rename:
+            self._rename(note)
 
     def _rename(self, note: notebook.Note) -> None:
-        active = note.id == self._current.id
-        title = self.title.text() if active else note.title
-        name, accepted = QInputDialog.getText(self, tr("Rename"), tr("Note title"), text=title)
-        name = name.strip()
-        if not accepted or not name or name == title.strip():
+        if not self.save():
             return
-        if active:
-            self.title.setText(name)
-            if self.save() and not self._matches(self._current):
-                self._open(self._first())
+        if note.id and note.id != self._current.id:
+            self._open(note)
+        key = self._current.id
+        for row in range(self.list_.count()):
+            item = self.list_.item(row)
+            if item.data(ROLE).id == key:
+                self.window().activateWindow()
+                self.list_.scrollToItem(item)
+                self.list_.setFocus()
+                self.list_.editItem(item)
+                return
+        self.title.setFocus()
+        self.title.selectAll()
+
+    def _save_title(self, note: notebook.Note, title: str) -> None:
+        if title == note.title:
             return
         try:
-            notebook.save(self.recordings, dataclasses.replace(note, title=name), note)
+            saved = notebook.save(self.recordings, dataclasses.replace(note, title=title), note)
         except (OSError, ValueError) as error:
             self._report(error)
             return
+        if note.id == self._current.id:
+            self._current = saved
+            with QSignalBlocker(self.title):
+                self.title.setText(title)
+        # Let Qt close the editor and deliver the click before rebuilding its list.
+        QTimer.singleShot(0, self, self._refresh_after_rename)
+
+    def _refresh_after_rename(self) -> None:
         self._refresh()
+        if self._current.id and not self._matches(self._current):
+            self._open(self._first())
 
     def _pin(self) -> None:
         if self.save() and self._current.id:
@@ -436,6 +490,7 @@ class NotebookPage(QWidget):
                 first = next((line for line in note.text.splitlines() if line.strip()), "")
                 label = note.title or first[:70] or tr("Untitled note")
                 item = QListWidgetItem(f"★  {label}" if note.pinned else label)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                 item.setData(ROLE, note)
                 item.setToolTip(note.project)
                 self.list_.addItem(item)
