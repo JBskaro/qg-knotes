@@ -11,10 +11,10 @@ import unittest
 from unittest import mock
 
 import shiboken6
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QResizeEvent, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QLineEdit, QLabel, QMenu, QMessageBox, QPushButton, QWidget
 
 from knotes import catalog, projects, minutes, notebook, notes, transcript, kinds, meeting_rows, tasks
 from knotes.meeting_list import Busy
@@ -297,27 +297,83 @@ class TestMeetingsList(unittest.TestCase):
         self.assertEqual(page._current.id, first.id)
         self.assertEqual(page.list_.currentItem().text(), first.title)
 
-    def test_rename_preserves_note_and_other_draft(self):
+    def test_inline_rename_from_list_keyboard_and_menu(self):
         note = notebook.save(
             self.recordings, notebook.Note(title="План", text="Текст", project="Склад"), notebook.Note()
         )
         other = notebook.save(self.recordings, notebook.Note(title="Черновик", pinned=True), notebook.Note())
         page = NotebookPage(self.recordings, ["Склад"])
         self.addCleanup(page.close)
-        page.body.setPlainText("Новая строка")
-        with mock.patch.object(QInputDialog, "getText", return_value=("Итоги", True)):
-            page._rename(note)
-        self.assertEqual(page._current.id, other.id)
-        self.assertEqual(page.body.toPlainText(), "Новая строка")
-        self.assertTrue(page.save())
+        page.show()
+        page.activateWindow()
+        app.processEvents()
+
+        def point(key):
+            item = next(
+                page.list_.item(row)
+                for row in range(page.list_.count())
+                if page.list_.item(row).data(Qt.ItemDataRole.UserRole).id == key
+            )
+            return page.list_.visualItemRect(item).center()
+
+        def editor():
+            return next(widget for widget in page.list_.findChildren(QLineEdit) if widget.isVisible())
+
+        page.body.insertPlainText("Новая строка")
+        QTest.mouseClick(page.list_.viewport(), Qt.MouseButton.LeftButton, pos=point(note.id))
+        QTest.mouseDClick(page.list_.viewport(), Qt.MouseButton.LeftButton, pos=point(note.id))
+        field = editor()
+        self.assertEqual(field.selectedText(), "План")
+        QTest.keyClicks(field, "Plan")
+        QTest.keyClick(field, Qt.Key.Key_Return)
+        app.processEvents()
         saved = next(item for item in notebook.list_(self.recordings) if item.id == note.id)
         self.assertEqual(dataclasses.replace(saved, updated=note.updated, title=note.title), note)
-        self.assertEqual(saved.title, "Итоги")
-        page._open(saved)
-        for name, accepted in (("Отмена", False), ("  ", True)):
-            with mock.patch.object(QInputDialog, "getText", return_value=(name, accepted)):
-                page._rename(saved)
-            self.assertEqual(page.title.text(), "Итоги")
+        self.assertEqual((page.title.text(), saved.title), ("Plan", "Plan"))
+        page.body.setFocus()
+        QTest.keyClick(page.body, Qt.Key.Key_F2)
+        field = editor()
+        self.assertTrue(field.hasFocus())
+        QTest.keyClicks(field, "Cancel")
+        QTest.keyClick(field, Qt.Key.Key_Escape)
+        app.processEvents()
+        self.assertEqual(page.title.text(), "Plan")
+
+        def choose_rename():
+            menu = QApplication.activePopupWidget()
+            QTest.mouseClick(menu, Qt.MouseButton.LeftButton, pos=menu.actionGeometry(menu.actions()[0]).center())
+
+        QTimer.singleShot(0, choose_rename)
+        page._note_menu(point(other.id))
+        field = editor()
+        app.processEvents()
+        self.assertTrue(field.hasFocus(), repr(QApplication.focusWidget()))
+        self.assertEqual(field.selectedText(), "Черновик")
+        QTest.keyClicks(field, "Draft")
+        QTest.mouseClick(page.body.viewport(), Qt.MouseButton.LeftButton)
+        app.processEvents()
+        renamed = next(item for item in notebook.list_(self.recordings) if item.id == other.id)
+        self.assertTrue(renamed.pinned)
+        self.assertEqual((renamed.title, renamed.text), ("Draft", "Новая строка"))
+
+    def test_clicking_another_note_commits_inline_title(self):
+        first = notebook.save(self.recordings, notebook.Note(title="Первая", pinned=True), notebook.Note())
+        second = notebook.save(self.recordings, notebook.Note(title="Вторая"), notebook.Note())
+        page = NotebookPage(self.recordings, [])
+        self.addCleanup(page.close)
+        page.show()
+        page.activateWindow()
+        page.list_.setFocus()
+        app.processEvents()
+        QTest.keyClick(page.list_, Qt.Key.Key_F2)
+        field = page.list_.findChild(QLineEdit)
+        self.assertEqual(field.selectedText(), first.title)
+        QTest.keyClicks(field, "Saved")
+        point = page.list_.visualItemRect(page.list_.item(1)).center()
+        QTest.mouseClick(page.list_.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        app.processEvents()
+        self.assertEqual(page._current.id, second.id)
+        self.assertEqual(notebook.list_(self.recordings)[0].title, "Saved")
 
     def test_notebook_delete_targets_the_clicked_note_and_keeps_other_edits(self):
         first = notebook.save(self.recordings, notebook.Note(title="Первая"), notebook.Note())

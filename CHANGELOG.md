@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.4 - 2026-11-25
+
+- Rename a note directly in the notebook list by double-clicking its title, pressing F2, or choosing Rename from its menu.
+- Enter or clicking away saves the new title. Escape cancels the edit.
+
 ## 0.23.3 - 2026-11-25
 
 - Rename notebook notes from the list, the note menu or with F2.
