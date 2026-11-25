@@ -123,85 +123,47 @@ class TestInstall(unittest.TestCase):
             updates.stage_portable(self._archive({"../evil.exe": b"x", "QG Knotes/QG Knotes.exe": b"new"}))
         self.assertFalse((self.folder.parent / "evil.exe").exists())
 
-    def test_swap_program_files_keeps_others(self):
-        old_one, new_one = self.folder / "старая", self.folder / "новая"
-        for folder, label in ((old_one, b"old"), (new_one, b"new")):
-            (folder / "_internal").mkdir(parents=True)
-            (folder / "QG Knotes.exe").write_bytes(label)
-            (folder / "_internal" / "lib.dll").write_bytes(label)
-        (old_one / "_internal" / "only_old.dll").write_bytes(b"old")
-        (old_one / "мои заметки.txt").write_bytes(b"mine")  # someone else's file next to the program
-        updates.swap(new_one, old_one)
-        self.assertEqual((old_one / "QG Knotes.exe").read_bytes(), b"new")
-        self.assertEqual((old_one / "_internal" / "lib.dll").read_bytes(), b"new")
-        self.assertFalse((old_one / "_internal" / "only_old.dll").exists())
-        self.assertEqual((old_one / "мои заметки.txt").read_bytes(), b"mine")
-        self.assertEqual(sorted(p.name for p in old_one.iterdir()), ["QG Knotes.exe", "_internal", "мои заметки.txt"])
-
-    def test_failed_swap_restores_old(self):
-        old_one, new_one = self.folder / "старая", self.folder / "новая"
-        (old_one / "_internal").mkdir(parents=True)
-        (old_one / "QG Knotes.exe").write_bytes(b"old")
-        new_one.mkdir()  # the new copy has no program files
-        with self.assertRaises(OSError):
-            updates.swap(new_one, old_one)
-        self.assertEqual((old_one / "QG Knotes.exe").read_bytes(), b"old")
-        self.assertTrue((old_one / "_internal").is_dir())
-
     def _two_copies(self) -> tuple[pathlib.Path, pathlib.Path]:
         place = pathlib.Path(tempfile.mkdtemp(dir=self.folder))
-        old_one, new_one = place / "старая", place / "новая"
-        for folder, label in ((old_one, b"old"), (new_one, b"new")):
-            (folder / "_internal").mkdir(parents=True)
-            (folder / "QG Knotes.exe").write_bytes(label)
-            (folder / "_internal" / "lib.dll").write_bytes(label)
-        return old_one, new_one
+        old, new = place / "old", place / "new"
+        for folder, runtime, data in ((old, "_internal", b"old"), (new, updates.RUNTIME, b"new")):
+            (folder / runtime).mkdir(parents=True)
+            (folder / updates.EXE).write_bytes(data)
+            (folder / runtime / "lib.dll").write_bytes(data)
+        return old, new
 
-    def _old_in_place(self, old_one: pathlib.Path) -> None:
-        self.assertEqual(sorted(p.name for p in old_one.iterdir()), ["QG Knotes.exe", "_internal"])
-        self.assertEqual((old_one / "QG Knotes.exe").read_bytes(), b"old")
-        self.assertEqual((old_one / "_internal" / "lib.dll").read_bytes(), b"old")
-
-    def test_folder_held_by_other_process_restores_exe(self):
-        """The exe is moved aside, the _internal folder is held (Claude Desktop runs "QG Knotes.exe --mcp"): the exe
-        comes back, the program is not lost."""
-        old_one, new_one = self._two_copies()
-        real = updates._replace
-
-        def replace(path: pathlib.Path, backup: pathlib.Path) -> None:
-            if path.name == "_internal":
-                raise PermissionError(5, "Access is denied", str(path))
-            real(path, backup)
-
+    def test_interrupted_update_keeps_old_program_and_can_retry(self):
+        old, new = self._two_copies()
+        (old / "notes.txt").write_text("mine")
         with (
-            mock.patch.object(updates, "_replace", replace),
-            self.assertLogs(updates.log, "ERROR"),
-            self.assertRaises(PermissionError),
+            mock.patch.object(updates.transcript, "replace", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
         ):
-            updates.swap(new_one, old_one)
-        self._old_in_place(old_one)
-
-    def test_failed_copy_restores_both(self):
-        old_one, new_one = self._two_copies()
+            updates.swap(new, old)
+        self.assertEqual((old / updates.EXE).read_bytes(), b"old")
+        self.assertEqual((old / "_internal/lib.dll").read_bytes(), b"old")
+        updates.swap(new, old)
+        self.assertEqual((old / updates.EXE).read_bytes(), b"new")
+        self.assertEqual((old / updates.RUNTIME / "lib.dll").read_bytes(), b"new")
+        self.assertEqual((old / "notes.txt").read_text(), "mine")
         with (
-            mock.patch.object(updates.shutil, "copytree", side_effect=OSError(28, "No space left on device")),
-            self.assertLogs(updates.log, "ERROR"),
+            mock.patch.object(updates, "program_folder", return_value=old),
+            mock.patch.object(sys, "_MEIPASS", str(old / updates.RUNTIME), create=True),
+            mock.patch.object(updates, "updates_folder", return_value=self.folder / "absent"),
+        ):
+            updates.cleanup()
+        self.assertFalse((old / "_internal").exists())
+
+    def test_failed_copy_leaves_old_program_runnable(self):
+        old, new = self._two_copies()
+        with (
+            mock.patch.object(updates.shutil, "copytree", side_effect=OSError("disk full")),
             self.assertRaises(OSError),
         ):
-            updates.swap(new_one, old_one)
-        self._old_in_place(old_one)
-
-    def test_restore_failure_is_told(self):
-        old_one, new_one = self._two_copies()
-        with (
-            mock.patch.object(updates.shutil, "copytree", side_effect=OSError(28, "No space left on device")),
-            mock.patch.object(pathlib.Path, "rename", side_effect=PermissionError(5, "Access is denied")),
-            mock.patch.object(updates, "_replace", lambda path, backup: path.replace(backup)),
-            self.assertLogs(updates.log, "ERROR"),
-            self.assertRaises(updates.RestoreError) as error,
-        ):
-            updates.swap(new_one, old_one)
-        self.assertIn(".old", str(error.exception))
+            updates.swap(new, old)
+        self.assertEqual((old / updates.EXE).read_bytes(), b"old")
+        self.assertEqual((old / "_internal/lib.dll").read_bytes(), b"old")
+        self.assertFalse((old / updates.RUNTIME).exists())
 
     def _finish(self, *, exited: bool = True, busy: list[list[int]] | None = None, answer: int = 2) -> tuple:
         old_one, new_one = self._two_copies()
@@ -234,10 +196,7 @@ class TestInstall(unittest.TestCase):
         self.assertEqual((code, started, exe), (1, 1, b"old"))
 
     def test_failed_swap_is_told_and_nothing_started(self):
-        for failure, text in (
-            (PermissionError(5, "Access is denied"), "Прежняя версия на месте"),
-            (updates.RestoreError("не вернулась"), "не вернулась"),
-        ):
+        for failure, text in ((PermissionError(5, "Access is denied"), "Прежняя версия на месте"),):
             with (
                 self.subTest(failure=type(failure).__name__),
                 mock.patch.object(updates, "swap", side_effect=failure),

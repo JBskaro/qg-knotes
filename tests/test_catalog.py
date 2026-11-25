@@ -57,6 +57,26 @@ class TestCatalog(unittest.TestCase):
         result = {v.title: v.status for v in catalog.list_(self.recordings)}
         self.assertEqual(result, {"Созвон.mp4": catalog.FILE, "Взят": catalog.RECORDED})
 
+    def test_unreadable_import_source_does_not_hide_the_meeting(self):
+        folder = self._folder("meeting", "общая.flac")
+        (folder / transcript.SOURCE).write_bytes(b"\xff")
+        with self.assertLogs(catalog.log, "WARNING"):
+            self.assertIn(folder, [row.folder for row in catalog.list_(self.recordings)])
+
+    def test_changed_import_shows_until_that_version_is_imported(self):
+        source = self.recordings / "meeting.wav"
+        source.write_bytes(b"first")
+        folder = self._folder("meeting", "общая.flac")
+        (folder / transcript.SOURCE).write_text(str(source.resolve()), encoding="utf-8")
+        catalog.set_(folder, версия_источника=catalog.fingerprint(source))
+        self.assertNotIn(source, [row.folder for row in catalog.list_(self.recordings)])
+        source.write_bytes(b"second")
+        self.assertIn(source, [row.folder for row in catalog.list_(self.recordings)])
+        new = self._folder("meeting_2", "общая.flac")
+        (new / transcript.SOURCE).write_text(str(source.resolve()), encoding="utf-8")
+        catalog.set_(new, версия_источника=catalog.fingerprint(source))
+        self.assertNotIn(source, [row.folder for row in catalog.list_(self.recordings)])
+
     def _ready_meeting(self, name: str, text: str, cost: float = 0.0, seconds: float = 0.0) -> pathlib.Path:
         folder = self._folder(name, "микрофон.flac")
         (folder / "расшифровка.md").write_text(f"# Встреча {name}\n\n{text}\n", encoding="utf-8")

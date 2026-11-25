@@ -93,6 +93,13 @@ class TestCalendar(unittest.TestCase):
             self.assertIsNone(ics_calendar.current_value(meetings, _msk(2026, 10, day, hour, 5)))
         self.assertIsNotNone(ics_calendar.current_value(meetings, _msk(2026, 10, 19, 10, 5)))
 
+    def test_daily_series_respects_weekdays_and_exact_cutoff(self):
+        start = datetime.datetime(2026, 11, 19, 9)
+        horizon = start + datetime.timedelta(days=7)
+        dates = ics_calendar.repeats(start, "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=3", horizon, set())
+        self.assertEqual([day.day for day in dates], [19, 20, 23])
+        self.assertEqual(ics_calendar.repeats(start, "FREQ=DAILY;UNTIL=20261120T080000", horizon, set()), [start])
+
     def test_repeat_count_and_every_other_day(self):
         start = datetime.datetime(2026, 10, 1, 9, 0)
         repeats = ics_calendar.repeats(start, "FREQ=DAILY;INTERVAL=2;COUNT=3", datetime.datetime(2027, 1, 1), set())

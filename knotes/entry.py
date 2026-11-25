@@ -36,7 +36,7 @@ def main(arguments: list[str] | None = None) -> int:
 
         journal.setup("swap")
         start = arguments.index(SWAP) + 1
-        return updates.finish_swap(arguments[start : start + 3])
+        return updates.finish_swap(arguments[start : start + 4])
     if "--transcribe" in arguments:  # no windows: for scripts and Claude; result: exit code and расшифровка.md
         from knotes import journal, recognition  # noqa: PLC0415
 

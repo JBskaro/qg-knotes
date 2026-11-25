@@ -6,17 +6,18 @@ What is shown is counted in knotes/summary_report.py; the window draws it: the c
 (summary_filters) and the table by meeting (summary_table) are modules of their own.
 """
 
+import dataclasses
 import datetime
 import logging
 import pathlib
 from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from knotes import catalog, failures, providers, spending, summary_report
 from knotes.language import tr
-from knotes.summary_report import Figure, Line, clock, dollars, number
+from knotes.summary_report import Figure, Line, clock, number
 from knotes.ui import style
 from knotes.ui.background import run_in_background
 from knotes.ui.summary_charts import Columns, Strip, gray, kind_color, legend
@@ -90,6 +91,9 @@ class SummaryWindow(QWidget):
         self._project_looks = project_looks
         self.filters = Filters(catalog.projects(self._all_meetings, list(known)), project_looks, project)
         self.filters.changed.connect(self.display)
+        self.currency = QComboBox()
+        self.currency.currentTextChanged.connect(self.display)
+        self._set_currencies()
         self.refreshed = QLabel()
         self.refreshed.setObjectName("тихий_текст")
         self.tiles = [
@@ -98,7 +102,10 @@ class SummaryWindow(QWidget):
             Tile(tr("Meeting hours")),
             Tile(tr("Key balance now"), True),
         ]  # the balance does not depend on the filters
-        self.expenses = Columns(catalog.money, lambda z: dollars(number(z)))
+        self.expenses = Columns(
+            lambda z: catalog.money(z, self.currency.currentText()),
+            lambda z: catalog.currency_amount(number(z), self.currency.currentText()),
+        )
         self.clock = Columns(lambda z: clock(z * 3600), lambda z: tr("{hours} h", hours=number(z)))
         self._headings = [self._heading(""), self._heading("")]
         self.legend = QLabel()
@@ -109,6 +116,17 @@ class SummaryWindow(QWidget):
         self.by_meetings.open_view.connect(self.open_meeting)
         self._build()
         self._paint()
+
+    def _set_currencies(self) -> None:
+        units = {expense.currency for expense in self._all_expenses} or {"USD"}
+        current = self.currency.currentText()
+        self.currency.blockSignals(True)
+        self.currency.clear()
+        self.currency.addItems(sorted(units, key=lambda unit: (unit != "USD", unit)))
+        if current in units:
+            self.currency.setCurrentText(current)
+        self.currency.blockSignals(False)
+        self.currency.setVisible(len(units) > 1)
 
     def _read_data(self) -> tuple[list[catalog.Meeting], list[spending.Expense], str]:
         meetings = catalog.list_(self.recordings)
@@ -141,12 +159,14 @@ class SummaryWindow(QWidget):
             return
         if not error:
             self._all_meetings, self._all_expenses = meetings, expenses
+            self._set_currencies()
         self._spending_error = error
         self.display()
 
     def _build(self) -> None:
         top = QHBoxLayout()
         top.addWidget(self.filters, 1)
+        top.addWidget(self.currency)
         top.addWidget(self.refreshed)
         tiles = QHBoxLayout()
         for tile in self.tiles:
@@ -227,7 +247,7 @@ class SummaryWindow(QWidget):
 
     def display(self) -> None:
         """Render the current snapshot for the selected dates and project."""
-        selection = self.filters.selection()
+        selection = dataclasses.replace(self.filters.selection(), currency=self.currency.currentText())
         report = summary_report.report(self._all_meetings, self._all_expenses, selection, datetime.date.today())
         self._displayed = True
         self.window().setWindowTitle(summary_report.title(selection.project, style.NAME))
@@ -238,15 +258,21 @@ class SummaryWindow(QWidget):
         self.legend.setText(legend())
         self.expenses.set_(report.costs, report.current, report.cost_tips)
         self.clock.set_(report.hours_bars, report.current)
-        self.by_meetings.set_(report.rows)
+        self.by_meetings.set_(report.rows, selection.currency)
         self._show_spending(report)
 
     def _show_spending(self, report: summary_report.Report) -> None:
         self.tiles[0].set_(summary_report.spent_figure(report, self._spending_error))
         self._show_lines(
-            self._projects, summary_report.project_lines(report.projects), tr("No meetings in this period")
+            self._projects,
+            summary_report.project_lines(report.projects, report.selection.currency),
+            tr("No meetings in this period"),
         )
-        self._show_lines(self._models, summary_report.model_lines(report.result), tr("No costs in this period"))
+        self._show_lines(
+            self._models,
+            summary_report.model_lines(report.result, report.selection.currency),
+            tr("No costs in this period"),
+        )
 
     def _show_lines(self, grid_layout: QGridLayout, lines: list[Line], empty: str) -> None:
         """Breakdown rows: name, share strip, figure on the right, the tooltip on the whole row; without rows, empty

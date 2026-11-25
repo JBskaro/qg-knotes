@@ -193,14 +193,18 @@ class TestMinutes(unittest.TestCase):
 
 
 class TestModelAnswer(unittest.TestCase):
-    def _ask(self, answer: tuple[int, str], body: dict | None = None) -> tuple[str, float]:
+    def _ask(self, answer: tuple[int, str], body: dict | None = None) -> tuple[str, providers.Charge]:
         with mock.patch.object(providers, "_send_json", return_value=answer) as sending:
             result = providers.model_answer(providers.find("openrouter", "протоколы"), "к", body or {})
         self.assertEqual(sending.call_args.args[2], "https://openrouter.ai/api/v1/chat/completions")
         return result
 
     def test_text_and_cost(self):
-        self.assertEqual(self._ask(_answer("Итоги", 0.05)), ("Итоги", 0.05))
+        self.assertEqual(self._ask(_answer("Итоги", 0.05)), ("Итоги", providers.Charge(0.05)))
+
+    def test_response_currency_precedes_the_preset_default(self):
+        answer = {"usage": {"cost": 1.5, "currency": "eur"}, "choices": [{"message": {"content": "OK"}}]}
+        self.assertEqual(self._ask((200, json.dumps(answer))), ("OK", providers.Charge(1.5, "EUR")))
 
     def test_failures_in_plain_text(self):
         for answer, body, word in [

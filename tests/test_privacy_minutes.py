@@ -39,7 +39,7 @@ class TestPrivacyMinutes(unittest.TestCase):
         self.local = providers.connection("протоколы", "свой", "")
 
     def _compose(self, params: minutes.Params, answer: str) -> str:
-        with mock.patch.object(providers, "model_answer", return_value=(answer, 0.0)) as call:
+        with mock.patch.object(providers, "model_answer", return_value=(answer, providers.Charge(0.0))) as call:
             minutes.compose(self.folder, params)
         return call.call_args.args[2]["messages"][1]["content"]
 
@@ -57,7 +57,9 @@ class TestPrivacyMinutes(unittest.TestCase):
 
     def test_custom_instruction_and_transcript_share_redaction_labels(self):
         params = minutes.Params(self.cloud, "к", self.cloud.model, f"Отправить на {MAIL}")
-        with mock.patch.object(providers, "model_answer", return_value=("Ответ [EMAIL_1]", 0.0)) as call:
+        with mock.patch.object(
+            providers, "model_answer", return_value=("Ответ [EMAIL_1]", providers.Charge(0.0))
+        ) as call:
             minutes.compose(self.folder, params)
         for message in call.call_args.args[2]["messages"]:
             self.assertNotIn(MAIL, message["content"])

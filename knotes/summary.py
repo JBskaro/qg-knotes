@@ -160,6 +160,8 @@ def result(
     spending log on the day spent; without the log, from the meeting prices."""
     meetings_ = for_period(meetings, s, by)
     custom_items = _spending_for(spending.from_meetings(meetings) if expenses_ is None else expenses_, s, by)
+    if len({expense.currency for expense in custom_items}) > 1:
+        raise ValueError("Choose a currency before adding expenses")
     models_: dict[tuple[str, str], float] = {}
     for t_ in custom_items:
         models_[(t_.kind, t_.model)] = models_.get((t_.kind, t_.model), 0) + t_.how_many
@@ -220,10 +222,10 @@ def models(result_: Outcome) -> list[tuple[str, str, float, float]]:
     ]
 
 
-def arrangement(result_: Outcome) -> list[str]:
+def arrangement(result_: Outcome, currency: str = "USD") -> list[str]:
     """A line like "Speech · ElevenLabs Scribe v2 · 0,14 $ · 44%" for each model."""
     return [
-        " · ".join(ch for ch in (tr(kind), name, catalog.money(how_many), f"{share:.0%}") if ch)
+        " · ".join(ch for ch in (tr(kind), name, catalog.money(how_many, currency), f"{share:.0%}") if ch)
         for kind, name, how_many, share in models(result_)
     ]
 

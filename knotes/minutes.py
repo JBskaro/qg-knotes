@@ -219,10 +219,9 @@ def job(folder: pathlib.Path, params_: Params, kind: str | None = None) -> dict:
 def assistant_request(folder: pathlib.Path) -> str:
     """The request the user pastes to the AI assistant."""
     return language.tr(
-        'Write the minutes of the meeting "{meeting}" from QG Knotes (folder {folder}): get the task with the '
-        "get_protocol_task tool and save the minutes with the save_protocol tool.",
-        meeting=catalog.display_title(folder),
-        folder=folder.name,
+        "Write the minutes for meeting {meeting} in QG Knotes. Get the task with get_protocol_task "
+        "and save the minutes with save_protocol.",
+        meeting=privacy.meeting_id(folder.name),
     )
 
 
@@ -230,7 +229,7 @@ def save(folder: pathlib.Path, text: str, model: str, cost: float = 0.0) -> path
     """The draft into the meeting folder without a code-block wrapper; who wrote it and what it cost."""
     file = folder / FILE
     write_draft(folder, _unwrapped(text), rewritten=True)
-    catalog.set_(folder, minutes_cost=round(cost, 5) or None, minutes_model=model)
+    catalog.set_(folder, minutes_cost=round(cost, 5) or None, minutes_model=model, minutes_currency=None)
     return file
 
 
@@ -421,32 +420,44 @@ def compose(folder: pathlib.Path, params_: Params, keep: Callable[[pathlib.Path]
 
 
 def _paid(
-    folder: pathlib.Path, text: str, model: str, cost: float, keep: Callable[[pathlib.Path], None] | None
+    folder: pathlib.Path, text: str, model: str, charge: providers.Charge, keep: Callable[[pathlib.Path], None] | None
 ) -> pathlib.Path:
-    """A paid answer goes to the file first; the previous copy, the spending log and the price after it, and their
-    failure does not lose it. The copy and the write are one edit under the meeting folder lock: an AI edit of the
-    minutes at the same moment comes before or after it."""
+    """Preserve both the user's draft and the paid answer if history or the editor write fails."""
     file = folder / FILE
-    with transcript.locked(file):
-        try:
-            (keep or save_previous)(folder)
-        except OSError:
-            log.exception("the previous minutes of %s are not kept", folder.name)
-        write_draft(folder, _unwrapped(text), rewritten=True)
+    text = _unwrapped(text)
     try:
-        spending.write(folder, catalog.MINUTES_KIND, model, cost)  # before the new cost goes to the meeting
-    except OSError:
-        log.exception("the minutes expense of %s is not in the spending log", folder.name)
-    catalog.set_(folder, minutes_cost=round(cost, 5) or None, minutes_model=model)
+        with transcript.locked(file):
+            (keep or save_previous)(folder)
+            write_draft(folder, text, rewritten=True)
+    except OSError as error:
+        recovery = folder / f"протокол.черновик-{uuid.uuid4().hex[:12]}.md"
+        transcript.write_text(recovery, text)
+        spending.write(folder, catalog.MINUTES_KIND, model, charge)
+        raise OSError(
+            language.tr("Your edited minutes were kept. The new draft is in {file}.", file=recovery)
+        ) from error
+    spending.write(folder, catalog.MINUTES_KIND, model, charge)
+    catalog.set_(
+        folder,
+        minutes_cost=charge.amount or None,
+        minutes_model=model,
+        minutes_currency=charge.currency if charge.currency != "USD" else None,
+    )
     return file
 
 
-def hider_for(folder: pathlib.Path | None, params_: Params) -> privacy.Hider | None:
-    """Personal data is hidden only from a cloud model: Ollama, LM Studio or an own server get the text as is. With no
-    meeting (the meeting prep) the names to hide are the owner's and the vocabulary's."""
+def hider_for(
+    folder: pathlib.Path | None, params_: Params, meetings: list[pathlib.Path] | None = None
+) -> privacy.Hider | None:
+    """Use names from each source meeting when preparing cloud requests."""
     if not params_.hide_data or not privacy.cloud(params_.service.address):
         return None
-    return privacy.Hider(privacy.people(folder, params_.my_name, params_.vocabulary) if params_.hide_names else ())
+    people = []
+    if params_.hide_names:
+        people.extend(privacy.people(folder, params_.my_name, params_.vocabulary))
+        for meeting in meetings or ():
+            people.extend(privacy.people(meeting, "", ()))
+    return privacy.Hider(tuple(dict.fromkeys(people)))
 
 
 def result(folder: pathlib.Path) -> str:

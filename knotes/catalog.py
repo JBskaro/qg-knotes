@@ -6,6 +6,7 @@ import dataclasses
 import contextlib
 import datetime
 import functools
+import hashlib
 import logging
 import os
 import pathlib
@@ -32,6 +33,7 @@ FOLDER_NAME = "%Y-%m-%d_%H-%M"  # a meeting folder is named by its start time: "
 _MEETING_FILES = frozenset(
     (
         transcript.MANIFEST,
+        transcript.ASSEMBLED,
         ERROR,
         PROPERTIES,
         transcript.TRANSCRIPT,
@@ -57,6 +59,12 @@ class Meeting:
     minutes_model: str = ""
     started: datetime.datetime | None = dataclasses.field(default=None, compare=False)  # set once by meeting()
 
+    import_hash: str = ""
+    import_path: str = ""
+    import_stamp: tuple = ()
+    speech_costs: dict[str, float] = dataclasses.field(default_factory=dict)
+    minutes_currency: str = "USD"
+
     @property
     def title(self) -> str:
         return self.folder.name
@@ -64,9 +72,21 @@ class Meeting:
     @property
     def expenses(self) -> list[tuple[str, str, float]]:
         """What the money went to: (speech or minutes, model, amount)."""
-        minutes = self.minutes_cost
+        minutes = self.minutes_cost if self.minutes_currency == "USD" else 0
         result = [(SPEECH, self.model, (self.cost or 0) - minutes), (MINUTES_KIND, self.minutes_model, minutes)]
         return [r for r in result if r[2] > 0]
+
+    @property
+    def native_expenses(self) -> list[tuple[str, str, float, str]]:
+        rows = [(kind, model, amount, "USD") for kind, model, amount in self.expenses]
+        rows.extend(
+            (SPEECH, self.model, amount, unit)
+            for unit, amount in self.speech_costs.items()
+            if unit != "USD" and amount > 0
+        )
+        if self.minutes_currency != "USD" and self.minutes_cost > 0:
+            rows.append((MINUTES_KIND, self.minutes_model, self.minutes_cost, self.minutes_currency))
+        return rows
 
     @property
     def heading(self) -> str:
@@ -93,7 +113,7 @@ class Meeting:
         return self.folder / transcript.TRANSCRIPT
 
 
-def folder_date(folder: pathlib.Path, given: dict | None = None) -> datetime.datetime:
+def folder_date(folder: pathlib.Path, given: dict | None = None, source_path: str | None = None) -> datetime.datetime:
     """Start time from a name like "2026-10-22_10-18"; for a ready-made file and a meeting made from it, when the file
     was written (not when it was taken into work), and if the file is gone, when the folder appeared. A meeting from a
     file keeps that date in its properties (given, if already read), so the file is not looked for again."""
@@ -102,9 +122,10 @@ def folder_date(folder: pathlib.Path, given: dict | None = None) -> datetime.dat
     if stored := (properties(folder) if given is None else given).get("начало"):
         with contextlib.suppress(TypeError, ValueError):
             return datetime.datetime.fromisoformat(stored)
-    source = folder / transcript.SOURCE
+    source = _import_path(folder) if source_path is None else source_path
     files = [folder] if folder.is_file() else []
-    files += [pathlib.Path(source.read_text(encoding="utf-8").strip())] if source.exists() else []
+    if source:
+        files.append(pathlib.Path(source))
     files += [folder.with_name(folder.name + extension) for extension in sorted(RECORDING_FILES)]
     file = next((f for f in files if f.is_file()), None)
     return datetime.datetime.fromtimestamp(file.stat().st_mtime if file else folder.stat().st_birthtime)
@@ -158,7 +179,7 @@ def set_(folder: pathlib.Path, **fields: object) -> None:
 
 
 def _state(folder: pathlib.Path) -> str:
-    if (folder / transcript.MANIFEST).exists():
+    if (folder / transcript.MANIFEST).exists() or (folder / transcript.ASSEMBLED).exists():
         return INTERRUPTED
     if (folder / ERROR).exists():
         return RECOGNITION_ERROR
@@ -174,7 +195,8 @@ def _ready_meeting(result: Meeting) -> None:
     if data is None:
         return
     result.seconds = float(data["сведения"].get("длительность", 0))
-    result.cost = data["сведения"].get("стоимость")
+    result.speech_costs = data["сведения"].get("стоимость_по_валютам", {})
+    result.cost = result.speech_costs.get("USD", 0) if result.speech_costs else data["сведения"].get("стоимость")
     result.model = data["сведения"].get("провайдер", "").rpartition(", ")[2]  # "OpenRouter, elevenlabs/scribe-v2"
     result.participant_count = len({f["кто"] for f in data["фразы"]})
 
@@ -184,23 +206,39 @@ def meeting(folder: pathlib.Path) -> Meeting | None:
     if not status:
         return None
     given = properties(folder)
+    source = _import_path(folder)
+    stamp = given.get("метка_источника")
     result = Meeting(
         folder,
         status,
         seconds=float(given.get("секунд", 0)),
         custom_title=given.get("название", ""),
         project=given.get("проект", ""),
-        started=folder_date(folder, given),
+        started=folder_date(folder, given, source),
+        import_path=source,
+        import_hash=given.get("версия_источника", ""),
+        import_stamp=tuple(stamp) if isinstance(stamp, list) else (),
     )
     if status == READY:
         _ready_meeting(result)
         result.minutes_cost = float(given.get("стоимость_протокола") or 0)
         result.minutes_model = given.get("модель_протокола", "")
-        if result.minutes_cost:
+        result.minutes_currency = given.get("валюта_протокола") or "USD"
+        if result.minutes_cost and result.minutes_currency == "USD":
             result.cost = (result.cost or 0) + result.minutes_cost
     if status == RECOGNITION_ERROR:
         result.error = (folder / ERROR).read_text(encoding="utf-8")
     return result
+
+
+def _import_path(folder: pathlib.Path) -> str:
+    marker = folder / transcript.SOURCE
+    if marker.is_file():
+        try:
+            return marker.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as error:
+            log.warning("cannot read import source of %s: %s", folder, error)
+    return ""
 
 
 def _row_label(folder: pathlib.Path) -> tuple:
@@ -227,14 +265,43 @@ def _meeting_or_none(folder: pathlib.Path) -> Meeting | None:
         return None
 
 
+def fingerprint(path: pathlib.Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+@functools.lru_cache(maxsize=1024)
+def _source_hash(path: pathlib.Path, _stamp: tuple) -> str:
+    return fingerprint(path)
+
+
+def source_stamp(info: os.stat_result) -> tuple[int, int, int, int]:
+    return info.st_size, info.st_mtime_ns, info.st_ino, info.st_ctime_ns
+
+
+def _pending_source(file: pathlib.Path, folders: set[str], imports: dict[str, list[Meeting]]) -> bool:
+    versions = imports.get(os.path.normcase(str(file.resolve())))
+    if not versions:
+        return file.stem not in folders
+    try:
+        stamp = source_stamp(file.stat())
+        if any(m.import_stamp == stamp for m in versions):
+            return False
+        digest = _source_hash(file, stamp)
+        return all(m.import_hash != digest for m in versions)
+    except OSError:
+        return False
+
+
 def list_(recordings: pathlib.Path) -> list[Meeting]:
     """Meetings from newest to oldest by start time, plus ready-made recordings (video, audio) put into the recordings
     folder but not yet taken into work. Empty and foreign folders are skipped."""
     if not recordings.exists():
         return []
     elements = list(recordings.iterdir())
-    folders = {p.name for p in elements if p.is_dir()}
-    result = []
+    legacy_stems = set()
+    result, files = [], []
+    imports: dict[str, list[Meeting]] = {}
     for element in elements:
         if element.is_dir():
             try:
@@ -242,10 +309,16 @@ def list_(recordings: pathlib.Path) -> list[Meeting]:
             except OSError as error:  # deleted while listing, or the network drive dropped
                 log.warning("skipped meeting folder %s: %s", element.name, error)
                 continue
-            result.append(read_item and dataclasses.replace(read_item))  # a copy: edits keep the cached one intact
-        elif element.suffix.lower() in RECORDING_FILES and element.stem not in folders:
-            result.append(Meeting(element, FILE, started=folder_date(element)))
-    return sorted((v for v in result if v), key=lambda v: v.date, reverse=True)
+            if read_item:
+                result.append(dataclasses.replace(read_item))
+                if read_item.import_path:
+                    imports.setdefault(os.path.normcase(read_item.import_path), []).append(read_item)
+                else:
+                    legacy_stems.add(element.name)
+        elif element.suffix.lower() in RECORDING_FILES:
+            files.append(element)
+    result.extend(Meeting(p, FILE, started=folder_date(p)) for p in files if _pending_source(p, legacy_stems, imports))
+    return sorted(result, key=lambda v: v.date, reverse=True)
 
 
 def projects(meetings: list[Meeting], known: list[str] | None = None) -> list[str]:
@@ -296,18 +369,27 @@ def duration(seconds: float) -> str:
     return language.tr("{minutes_count} min", minutes_count=minutes_count)
 
 
-def money(amount: float) -> str:
+def currency_amount(text: str, currency: str) -> str:
+    symbol = {"USD": "$", "RUB": "₽"}.get(currency, currency)
+    if language.current() == "ru":
+        return f"{text.replace('.', ',')} {symbol}"
+    return f"${text}" if currency == "USD" else f"{text} {symbol}"
+
+
+def money(amount: float, currency: str = "USD") -> str:
     if amount < 0.01:
-        return language.tr("less than $0.01")
-    return f"{amount:.2f} $".replace(".", ",") if language.current() == "ru" else f"${amount:.2f}"
+        return language.tr("less than $0.01") if currency == "USD" else "< " + currency_amount("0.01", currency)
+    return currency_amount(f"{amount:.2f}", currency)
 
 
-def breakdown(total: float, minutes_list: float) -> str:
+def breakdown(total: float, minutes_list: float, currency: str = "USD") -> str:
     """What the price is made of: "speech 0,28 $, minutes 0,18 $"; empty without minutes."""
     if not minutes_list:
         return ""
     return language.tr(
-        "speech {speech}, minutes {minutes_list}", speech=money(total - minutes_list), minutes_list=money(minutes_list)
+        "speech {speech}, minutes {minutes_list}",
+        speech=money(total - minutes_list, currency),
+        minutes_list=money(minutes_list, currency),
     )
 
 
@@ -386,6 +468,8 @@ def _usage(answers: pathlib.Path, _mtime_ns: int, _size: int) -> tuple[float, fl
         for part in parts if isinstance(parts, list) else [parts]:
             try:
                 usage = (part.get("ответ") or {}).get("usage") or {}
+                if usage.get("currency", "USD") != "USD":
+                    continue
                 part_seconds, part_cost = float(usage.get("seconds") or 0), float(usage.get("cost") or 0)
             except (AttributeError, TypeError, ValueError):
                 log.warning("skipped a broken answer of %s in %s", track, answers)

@@ -12,6 +12,7 @@ only the text going to the minutes model is.
 
 import bisect
 import dataclasses
+import hashlib
 import ipaddress
 import pathlib
 import re
@@ -228,6 +229,10 @@ def cloud(address: str) -> bool:
     except ValueError:
         return "." in host and not host.endswith((".local", ".lan", ".home", ".localhost"))
     return not (ip.is_loopback or ip.is_private or ip.is_link_local)
+
+
+def meeting_id(name: str) -> str:
+    return "meeting-" + hashlib.sha256(name.encode("utf-8")).hexdigest()
 
 
 def people(folder: pathlib.Path | None, my_name: str, words: Iterable[vocab.Word]) -> tuple[str, ...]:

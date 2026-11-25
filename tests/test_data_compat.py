@@ -125,7 +125,10 @@ class TestLegacyData(unittest.TestCase):
         lines = (self.recordings / spending.FILE).read_text(encoding="utf-8").splitlines()
         spending.write(self.meeting, catalog.SPEECH, "elevenlabs/scribe-v2", 0.02)
         new_one = (self.recordings / spending.FILE).read_text(encoding="utf-8").splitlines()[-1]
-        self.assertEqual(set(json.loads(new_one)), set(json.loads(lines[-1])))
+        row = json.loads(new_one)
+        self.assertRegex(row.pop("платеж"), r"^[0-9a-f]{32}$")
+        self.assertEqual(set(row), set(json.loads(lines[-1])))
+        self.assertEqual((self.recordings / spending.FILE).read_text(encoding="utf-8").splitlines()[:-1], lines)
 
     def test_own_models_and_downloaded(self):
         folder = self.folder / "models"

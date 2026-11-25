@@ -53,6 +53,46 @@
       "поля_моделей": {"gpt-4o-transcribe-diarize": {"response_format": "diarized_json", "chunking_strategy": "auto"}}
     },
     {
+      "id": "routerai",
+      "название": "RouterAI",
+      "вид": "форма",
+      "адрес": "https://routerai.ru/api/v1",
+      "сайт_ключа": "routerai.ru",
+      "модель": "openai/whisper-large-v3",
+      "модели": [
+        "openai/whisper-large-v3"
+      ],
+      "ключ": "RouterAI",
+      "переменная": "ROUTERAI_API_KEY",
+      "проверка": "/key",
+      "валюта": "RUB",
+      "модели_запрос": "/models",
+      "выходная_модальность": "transcription",
+      "поля": {
+        "response_format": "verbose_json",
+        "timestamp_granularities[]": "word"
+      }
+    },
+    {
+      "id": "groq",
+      "название": "Groq",
+      "вид": "форма",
+      "адрес": "https://api.groq.com/openai/v1",
+      "сайт_ключа": "console.groq.com",
+      "модель": "whisper-large-v3-turbo",
+      "модели": [
+        "whisper-large-v3-turbo",
+        "whisper-large-v3"
+      ],
+      "ключ": "Groq",
+      "переменная": "GROQ_API_KEY",
+      "проверка": "/models",
+      "поля": {
+        "response_format": "verbose_json",
+        "timestamp_granularities[]": "word"
+      }
+    },
+    {
       "id": "свой",
       "название": "Свой сервер (OpenAI API)",
       "проверен": true,
@@ -94,6 +134,53 @@
       "ключ": "OpenAI",
       "переменная": "OPENAI_API_KEY",
       "проверка": "/models"
+    },
+    {
+      "id": "routerai",
+      "название": "RouterAI",
+      "вид": "чат",
+      "адрес": "https://routerai.ru/api/v1",
+      "сайт_ключа": "routerai.ru",
+      "модель": "deepseek/deepseek-v4.1-flash",
+      "модели": [
+        "deepseek/deepseek-v4.1-flash"
+      ],
+      "ключ": "RouterAI",
+      "переменная": "ROUTERAI_API_KEY",
+      "проверка": "/key",
+      "валюта": "RUB",
+      "модели_запрос": "/models",
+      "выходная_модальность": "text"
+    },
+    {
+      "id": "groq",
+      "название": "Groq",
+      "вид": "чат",
+      "адрес": "https://api.groq.com/openai/v1",
+      "сайт_ключа": "console.groq.com",
+      "модель": "openai/gpt-oss-120b",
+      "модели": [
+        "openai/gpt-oss-120b",
+        "llama-3.3-70b-versatile"
+      ],
+      "ключ": "Groq",
+      "переменная": "GROQ_API_KEY",
+      "проверка": "/models"
+    },
+    {
+      "id": "deepseek",
+      "название": "DeepSeek",
+      "вид": "чат",
+      "адрес": "https://api.deepseek.com",
+      "сайт_ключа": "platform.deepseek.com",
+      "модель": "deepseek-flash",
+      "модели": [
+        "deepseek-flash"
+      ],
+      "ключ": "DeepSeek",
+      "переменная": "DEEPSEEK_API_KEY",
+      "проверка": "/models",
+      "модели_запрос": "/models"
     },
     {
       "id": "свой",

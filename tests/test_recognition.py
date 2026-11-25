@@ -265,6 +265,42 @@ def _chunk(folder: pathlib.Path, file: str, frequency: int, seconds: float, valu
 
 
 class TestAssembly(unittest.TestCase):
+    def test_cleanup_retry_preserves_each_sample(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = pathlib.Path(temp)
+            entries = []
+            for i in (1, 2):
+                name = f"микрофон_{i:02}.wav"
+                _chunk(folder, name, SR, 1, 0.25 * i)
+                entries.append({"файл": name, "дорожка": "микрофон", "начало": i - 1})
+            (folder / recording.MANIFEST).write_text(json.dumps(entries), encoding="utf-8")
+            unlink = pathlib.Path.unlink
+
+            def interrupt(path, *args, **kwargs):
+                if path.name == entries[-1]["файл"]:
+                    raise PermissionError("busy")
+                unlink(path, *args, **kwargs)
+
+            with mock.patch.object(pathlib.Path, "unlink", interrupt), self.assertRaises(PermissionError):
+                recording.collect(folder)
+            output = folder / "микрофон.flac"
+            before = recognition.read_mono(output)
+            self.assertGreater(before[SR // 2], 0.2)
+            self.assertFalse((folder / entries[0]["файл"]).exists())
+            recording.collect(folder)
+            np.testing.assert_array_equal(before, recognition.read_mono(output))
+
+    def test_invalid_manifest_stays_recoverable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = pathlib.Path(temp) / "meeting"
+            folder.mkdir()
+            _chunk(folder, "микрофон_01.wav", SR, 1, 0.25)
+            (folder / recording.MANIFEST).write_bytes(b"[{")
+            with self.assertRaises(OSError):
+                recording.collect(folder)
+            self.assertIn(folder, recording.interrupted_all(folder.parent))
+            self.assertTrue((folder / "микрофон_01.wav").exists())
+
     def test_long_track_joined_without_holding_it_in_memory(self):
         """A 3-hour track used to take about 2.8 GB while joining: now ffmpeg streams the chunks into the FLAC."""
         with tempfile.TemporaryDirectory() as tmp:

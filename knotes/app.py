@@ -82,6 +82,7 @@ class App(QObject):
         self.list_pool = QThreadPool()  # the meeting list is read off the window thread, one reading at a time
         self.list_pool.setMaxThreadCount(1)
         self._reading, self._read_again = False, False
+        self._list_cache: tuple[pathlib.Path, list[catalog.Meeting]] | None = None
         self.window = MeetingsWindow()
         self.tray = QSystemTrayIcon(style.tray_icon(False))
         self.session = RecordingSession(
@@ -404,11 +405,15 @@ class App(QObject):
         """Speech recognition on this computer is chosen (no price)."""
         return providers.connection("распознавание", self.settings.provider, self.settings.address).local_engine
 
+    def _dollar_estimate(self) -> bool:
+        provider = providers.connection("распознавание", self.settings.provider, self.settings.address)
+        return not provider.local_engine and provider.currency == "USD"
+
     def _price(self, seconds: float, tracks_count: int) -> str:
         """Text " About 0,14 $." by the average price of past recognitions; empty with nothing to estimate from."""
         price = (
             catalog.price_per_second(catalog.list_(self.settings.recordings))
-            if seconds and not self._on_computer()
+            if seconds and self._dollar_estimate()
             else None
         )
         if not price:
@@ -586,7 +591,9 @@ class App(QObject):
         self._refresh_window()
 
     def _recognition_result(self, folder: pathlib.Path, result: object) -> None:
-        if isinstance(result, Exception):
+        if isinstance(result, transcript.JobBusy):
+            self.notify(catalog.display_title(folder), str(result))
+        elif isinstance(result, Exception):
             self.notify(
                 tr("Couldn't transcribe the meeting"),
                 tr(
@@ -618,7 +625,7 @@ class App(QObject):
     def _restored(self, folder: pathlib.Path, audio: bool, result: object) -> None:
         """Audio of an interrupted recording goes on as after a normal one; a video-only retry just reports."""
         if isinstance(result, Exception):
-            self.notify(tr("The interrupted recording was not assembled"), failures.text(result))
+            self.notify(tr("The interrupted recording was not assembled"), failures.text(result), folder)
         elif result:
             self.notify(tr("The video was not assembled"), str(result))
         if audio and not isinstance(result, Exception):
@@ -784,16 +791,23 @@ class App(QObject):
             self._read_again = True
             return
         self._reading = True
-        recordings, priced = self.settings.recordings, not self._on_computer()
-        run_in_background(self.list_pool, lambda: meeting_list.read(recordings, priced), self._list_read)
+        recordings, priced = self.settings.recordings, self._dollar_estimate()
+        run_in_background(
+            self.list_pool,
+            lambda: meeting_list.read(recordings, priced),
+            lambda value: self._list_read(recordings, value),
+        )
 
-    def _list_read(self, result: object) -> None:
+    def _list_read(self, recordings: pathlib.Path, result: object) -> None:
         self._reading = False
-        if isinstance(result, Exception):
+        if recordings != self.settings.recordings:
+            self._read_again = True
+        elif isinstance(result, Exception):
             self._show_error(result)
         else:
+            self._list_cache = recordings, result.meetings
             self.window.set_projects(self.settings.projects, self.settings.project_looks)
-            self.window.recordings_folder = self.settings.recordings
+            self.window.recordings_folder = recordings
             self.window.show_meetings(result.meetings, self.busy_items, self.jobs.progress, result.price)
             if result.open_tasks is not None:
                 self.window.set_tasks(result.open_tasks)
@@ -851,15 +865,14 @@ class App(QObject):
         """The task board and project notes in the meetings window instead of the list."""
         from knotes.ui.tasks_window import TasksWindow  # noqa: PLC0415 - loaded when first opened
 
-        meetings = catalog.list_(self.settings.recordings)
         page = TasksWindow(
             self.settings.recordings,
-            (
-                catalog.projects(meetings, self.settings.projects),
-                self.settings.project_looks,
-            ),
+            (self.settings.projects, self.settings.project_looks),
             project,
-            meetings=meetings,
+            meetings=self._list_cache[1]
+            if self._list_cache and self._list_cache[0] == self.settings.recordings
+            else None,
+            pool=self.list_pool,
         )
         page.open_place.connect(self.open_place)
         self.window.show_page(page, tr("Tasks"), "задачи")

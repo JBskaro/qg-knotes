@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.23.3 - 2026-11-25
+
+- Rename notebook notes from the list, the note menu or with F2.
+- Use a theme-aware update icon that matches the sidebar.
+- Add RouterAI and Groq for speech and minutes, and DeepSeek for minutes. Track reported charges in their original currency.
+- Improve recovery of recordings, minutes and expense receipts, calendar reminders and privacy masking.
+
 ## 0.23.2 - 2026-11-19
 
 - Search transcripts, minutes and notebooks in the background and jump to the matching point in a transcript.

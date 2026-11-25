@@ -32,23 +32,35 @@ class TestMinutesOrder(unittest.TestCase):
         service = providers.find("openrouter", "протоколы")
         self.params = minutes.Params(service, "ключ", service.model, "Инструкция")
 
-    def test_spending_log_failure_keeps_paid_minutes(self):
-        with (
-            mock.patch.object(providers, "model_answer", return_value=("# Итоги\n", 0.12)),
-            mock.patch.object(spending, "write", side_effect=PermissionError(13, "denied")),
-            self.assertLogs("knotes.minutes", "ERROR"),
-        ):
-            minutes.compose(self.folder, self.params)
-        self.assertEqual((self.folder / minutes.FILE).read_text(encoding="utf-8"), "# Итоги\n")
-        self.assertEqual(catalog.properties(self.folder)["стоимость_протокола"], 0.12)
+    def test_paid_minutes_survive_two_unwritable_journals(self):
+        write = transcript.write_text
+        journals = {self.recordings / name for name in (spending.FILE, spending.RESERVE)}
 
-    def test_failure_to_keep_previous_keeps_paid_minutes(self):
-        with (
-            mock.patch.object(providers, "model_answer", return_value=("# Итоги\n", 0.12)),
-            self.assertLogs("knotes.minutes", "ERROR"),
-        ):
-            minutes.compose(self.folder, self.params, keep=mock.Mock(side_effect=PermissionError(13, "in use")))
-        self.assertEqual((self.folder / minutes.FILE).read_text(encoding="utf-8"), "# Итоги\n")
+        def fail_journals(path, text):
+            if path in journals:
+                raise PermissionError("journal locked")
+            write(path, text)
+
+        minutes._paid(self.folder, "# First", "model", providers.Charge(0.1), None)
+        with mock.patch.object(transcript, "write_text", side_effect=fail_journals):
+            minutes._paid(self.folder, "# Second", "model", providers.Charge(0.2), None)
+            self.assertTrue((self.recordings / spending.PENDING).exists())
+        for _ in range(2):
+            charges = spending.list_(self.recordings, catalog.list_(self.recordings))
+            self.assertAlmostEqual(sum(row.how_many for row in charges), 0.3)
+        self.assertFalse((self.recordings / spending.PENDING).exists())
+
+    def test_failure_to_keep_history_preserves_user_edits_and_paid_draft(self):
+        original = self.folder / minutes.FILE
+        original.write_text("# Edited", encoding="utf-8")
+        with self.assertRaises(OSError):
+            minutes._paid(
+                self.folder, "# Generated", "model", providers.Charge(0.12), mock.Mock(side_effect=PermissionError())
+            )
+        self.assertEqual(original.read_text(encoding="utf-8"), "# Edited")
+        (recovery,) = self.folder.glob("протокол.черновик-*.md")
+        self.assertEqual(recovery.read_text(encoding="utf-8").strip(), "# Generated")
+        self.assertEqual([e.how_many for e in spending.list_(self.recordings, [])], [0.12])
 
     def test_no_key_changes_nothing(self):
         transcript.mark(self.folder, 7.0, f"{transcript.NOTE} старая заметка")
@@ -59,11 +71,11 @@ class TestMinutesOrder(unittest.TestCase):
     def test_minutes_written_before_spending_and_price_after(self):
         order = []
         with (
-            mock.patch.object(providers, "model_answer", return_value=("# Итоги\n", 0.12)),
+            mock.patch.object(providers, "model_answer", return_value=("# Итоги\n", providers.Charge(0.12))),
             mock.patch.object(
                 spending,
                 "write",
-                side_effect=lambda folder, *_: order.append(
+                side_effect=lambda folder, *_, **_kwargs: order.append(
                     ((folder / minutes.FILE).exists(), "стоимость_протокола" in catalog.properties(folder))
                 ),
             ),
@@ -86,7 +98,7 @@ class TestMinutesOrder(unittest.TestCase):
     def test_successful_request_keeps_previous(self):
         (self.folder / minutes.FILE).write_text("# Правка аналитика\n", encoding="utf-8")
         with (
-            mock.patch.object(providers, "model_answer", return_value=("# Новый\n", 0.0)),
+            mock.patch.object(providers, "model_answer", return_value=("# Новый\n", providers.Charge(0.0))),
             mock.patch.object(minutes, "params", return_value=self.params),
         ):
             ai_tools.compose_protocol(self.folder.name)

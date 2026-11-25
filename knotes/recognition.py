@@ -11,7 +11,6 @@ Command line: python -m knotes.recognition <meeting folder | recording file> [--
 import bisect
 import collections
 import dataclasses
-import hashlib
 import uuid
 import datetime
 import functools
@@ -205,7 +204,10 @@ def _recognize(params_: Params, mp3: bytes) -> dict:
     )
     for pause in (*RETRY_AFTER_S, None):
         try:
-            return providers.recognize(params_.provider, params_.key, request)
+            answer = providers.recognize(params_.provider, params_.key, request)
+            if (answer.get("usage") or {}).get("cost") is None:
+                answer["стоимость_не_сообщена"] = True
+            return answer
         except providers.TemporaryError as error:
             if pause is None:
                 raise
@@ -242,11 +244,13 @@ class Chunks:
 
     def received(self, parts: list[dict], model: str, whole: bool = False) -> list[dict]:
         part = parts[-1]
+        charge = providers.Charge.from_answer(part["ответ"])
         part.update(
             платеж=uuid.uuid4().hex,
             дата=datetime.datetime.now().isoformat(),
             модель=model,
-            сумма=providers.cost(part["ответ"]),
+            сумма=charge.amount,
+            валюта=charge.currency,
             ожидает=True,
         )
         if whole:
@@ -541,11 +545,6 @@ def _collect(words: dict[str, list[dict]], levels: dict[str, tuple | None]) -> l
     return result
 
 
-def _fingerprint(file: pathlib.Path) -> str:
-    with file.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def _convert_source(file: pathlib.Path, target: pathlib.Path) -> None:
     _ffmpeg("-y", "-i", str(file), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "flac", str(target))
 
@@ -568,7 +567,7 @@ def _same_import(folder: pathlib.Path, file: pathlib.Path, signature: str) -> bo
             same = audio_hash(track) == audio_hash(converted)
     except subprocess.CalledProcessError:
         return False
-    if same and _fingerprint(file) == signature:
+    if same and catalog.fingerprint(file) == signature:
         catalog.set_(folder, версия_источника=signature)
         return True
     return False
@@ -578,7 +577,7 @@ def folder_for_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Pat
     """The meeting folder for a ready file; a same-named file from another place gets its own numbered folder."""
     source = str(file.resolve())
     info = file.stat()
-    signature = _fingerprint(file)
+    signature = catalog.fingerprint(file)
     written = datetime.datetime.fromtimestamp(info.st_mtime).isoformat(timespec="seconds")
     recordings.mkdir(parents=True, exist_ok=True)
     with transcript.locked(recordings / SOURCE):
@@ -597,7 +596,12 @@ def folder_for_file(file: pathlib.Path, recordings: pathlib.Path) -> pathlib.Pat
                 folder, number = recordings / f"{file.stem}_{number}", number + 1
             else:
                 transcript.write_text(marker, source)
-                catalog.set_(folder, started=written, версия_источника=signature)
+                catalog.set_(
+                    folder,
+                    started=written,
+                    версия_источника=signature,
+                    метка_источника=catalog.source_stamp(info),
+                )
                 break
     return folder
 
@@ -614,7 +618,7 @@ def import_track(file: pathlib.Path, folder: pathlib.Path) -> pathlib.Path:
             working = folder / "общая.flac.tmp"
             try:
                 _convert_source(file, working)
-                if _fingerprint(file) != catalog.properties(folder).get("версия_источника"):
+                if catalog.fingerprint(file) != catalog.properties(folder).get("версия_источника"):
                     raise OSError(tr("The source recording changed during import. Import it again."))
                 transcript.replace(working, shared_track)
             finally:
@@ -729,6 +733,32 @@ def process(
     progress(done, total) runs after each provider request: how many audio parts are already recognized.
     payment(model, amount) also runs after each request: the spending is recorded even if the next request fails.
     """
+    with transcript.exclusive_job(folder / ".распознавание.lock"):
+        return _process(folder, params_, again, progress, payment)
+
+
+def _speech_costs(answers: dict) -> dict:
+    costs: dict[str, float] = {}
+    missing = False
+    for parts in answers.values():
+        for part in parts:
+            answer = part["ответ"]
+            if answer.get("стоимость_не_сообщена"):
+                missing = True
+                continue
+            charge = providers.Charge.from_answer(answer)
+            costs[charge.currency] = costs.get(charge.currency, 0) + charge.amount
+    info = {"стоимость": costs.get("USD", 0)}
+    if costs.keys() - {"USD"} or missing:
+        info["стоимость_по_валютам"] = costs
+    if missing:
+        info["стоимость_не_сообщена"] = True
+    return info
+
+
+def _process(
+    folder: pathlib.Path, params_: Params, again: bool, progress: Callable | None, payment: Callable | None
+) -> pathlib.Path:
     paths = {name: folder / f"{name}.flac" for name in TRACKS if (folder / f"{name}.flac").exists()}
     if not paths:
         raise providers.ProviderError(tr("Folder {folder} has no recorded tracks", folder=folder.name))
@@ -756,8 +786,8 @@ def process(
     for phrase in result:
         phrase["текст"] = vocab.fix(phrase["текст"], list(params_.vocabulary))
     info = {
+        **_speech_costs(answers),
         "длительность": max(durations.values()),
-        "стоимость": sum(providers.cost(ch["ответ"]) for parts in answers.values() for ch in parts),
         "провайдер": f"{params_.provider.title}, {params_.final_model}",
     }
     execution = [
@@ -793,7 +823,7 @@ def main(arguments: list[str], payment: Callable[[pathlib.Path], Callable[[str, 
                 payment=payment and payment(folder),
             )
         )
-    except providers.ProviderError as error:
+    except (providers.ProviderError, transcript.JobBusy) as error:
         print(error)
         return 1
     return 0
